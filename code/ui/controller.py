@@ -82,7 +82,7 @@ class Controller:
     def request_pick_up_tile(self, player):
         while self.running:
             self.display.display_messages(
-                line1="Player {} to move:".format(player),
+                line1="Player {} to pick up:".format(player),
                 line2="Select the first colour")
             pg.display.flip()
             colour1 = self.event_handler.request_tile_selection()

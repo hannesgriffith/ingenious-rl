@@ -18,12 +18,12 @@ def col_to_num(col):
 
 def num_to_col(num):
     map = {
-        1: "red",
-        2: "orange",
-        3: "yellow",
-        4: "green",
-        5: "blue",
-        6: "purple"
+        1: "red",   # 0
+        2: "orange",# 1
+        3: "yellow",# 2
+        4: "green", # 3
+        5: "blue",  # 4
+        6: "purple" # 5
     }
     return map[num]
 

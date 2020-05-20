@@ -5,29 +5,42 @@ import numpy as np
 from game.strategy import get_strategy
 from game.misc import flip_tile
 
-def get_player(player_number, board, tiles, params):
-    if params[player_number]["player_type"] == "computer":
-        return ComputerPlayer(player_number, board, tiles, params)
-    elif params[player_number]["player_type"] == "human":
-        return HumanPlayer(player_number, board, tiles, params)
+def get_player(player_type, player_num, player_name, board, tiles,
+                strategy_type):
+    if player_type == "computer":
+        return ComputerPlayer(player_num, player_name, board, tiles,
+                                strategy_type)
+    elif player_type == "human":
+        return HumanPlayer(player_num, player_name, board, tiles)
+    else:
+        assert False
 
 class ComputerPlayer:
-    def __init__(self, player_number, board, tiles, params):
-        self.player_number = player_number
-        self.name = params[self.player_number]["name"]
-        self.player_type = params[self.player_number]["player_type"]
-        self.strategy_type = params[self.player_number]["strategy_type"]
+    def __init__(self, player_num, player_name, board, tiles, strategy_type):
+        self.player_num = player_num
+        self.player_type = "computer"
+        self.name = player_name
 
         self.tiles = tiles
         self.board = board
         self.deck = Deck(tiles=self.tiles)
         self.score = Score()
-        self.strategy = get_strategy(self.strategy_type, self.board,
-                                        self.deck, self.score)
+        self.strategy = get_strategy(strategy_type)
 
-    def make_move(self):
-        chosen_move, should_exchange = self.strategy.choose_move()
-        self.board.check_move_is_legal(chosen_move)
+    def choose_strategy_move(self, players, player_num, repr_fn):
+        move, value = self.strategy.choose_move(
+            self.board,
+            self.deck,
+            self.score,
+            players,
+            player_num,
+            repr_fn
+        )
+        return move, value
+
+    def make_move(self, players, player_num, repr_fn):
+        move, _ = self.choose_strategy_move(players, player_num, repr_fn)
+        chosen_move, should_exchange = move
         move_score = self.board.calculate_move_score(chosen_move)
         self.board.update_board(chosen_move)
         ingenious = self.score.update_score(move_score)
@@ -39,6 +52,15 @@ class ComputerPlayer:
         min_score = np.min(self.get_score())
         min_colours = [c + 1 for c, s in enumerate(self.score.get_score()) if s == min_score]
         for tile in self.deck.iterator():
+            c1, c2 = tile
+            if c1 in min_colours or c2 in min_colours:
+                return False
+        return True
+
+    def peak_can_exchange_tiles(self, deck, score):
+        min_score = np.min(score)
+        min_colours = [c + 1 for c, s in enumerate(score) if s == min_score]
+        for tile in deck:
             c1, c2 = tile
             if c1 in min_colours or c2 in min_colours:
                 return False
@@ -61,10 +83,10 @@ class ComputerPlayer:
         return self.score.get_score()
 
 class HumanPlayer:
-    def __init__(self, player_number, board, tiles, params):
-        self.player_number = player_number
-        self.name = params[self.player_number]["name"]
-        self.player_type = params[self.player_number]["player_type"]
+    def __init__(self, player_num, player_name, board, tiles):
+        self.player_num = player_num
+        self.player_type = "human"
+        self.name = player_name
 
         self.tiles = tiles
         self.board = board
@@ -119,8 +141,23 @@ class Score:
     def get_score(self):
         return self.score.tolist()
 
+    def get_score_copy(self):
+        return [i for i in self.get_score()]
+
     def min_score(self):
         return np.min(self.score)
+
+    def peak_next_score(self, move_score):
+        score_copy = self.get_score_copy()
+        move_score = np.array(move_score, dtype='int32')
+        ingenious = False
+        count_before = np.sum(score_copy == 18)
+        score_copy += move_score
+        score_copy[score_copy > 18] = 18
+        count_after = np.sum(score_copy == 18)
+        if count_after > count_before:
+            ingenious = True
+        return score_copy, ingenious
 
 class Deck:
     def __init__(self, tiles=None):
@@ -137,6 +174,19 @@ class Deck:
             self.deck.remove(flip_tile(tile_to_play))
         else:
             assert False
+
+    def peak_next_deck(self, tile_to_play):
+        deck_copy = self.get_deck_copy()
+        if tile_to_play in deck_copy:
+            deck_copy.remove(tile_to_play)
+        elif flip_tile(tile_to_play) in deck_copy:
+            deck_copy.remove(flip_tile(tile_to_play))
+        else:
+            assert False
+        return deck_copy
+
+    def get_deck_copy(self):
+        return [i for i in self.deck]
 
     def add_tile(self, new_tile):
         self.deck.append(new_tile)

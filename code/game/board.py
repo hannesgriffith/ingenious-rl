@@ -55,22 +55,40 @@ class Board:
 
     def initialise_available(self):
         self.available = np.zeros((self.side, self.side), dtype='int32')
-        self.available = self.update_available(self.available, [1, 1])
-        self.available = self.update_available(self.available, [1, 6])
-        self.available = self.update_available(self.available, [11, 1])
-        self.available = self.update_available(self.available, [6, 1])
-        self.available = self.update_available(self.available, [6, 11])
-        self.available = self.update_available(self.available, [11, 6])
+        self.available = self.update_available(self.available, [1, 1],
+                                        self.available_masks, self.occupied)
+        self.available = self.update_available(self.available, [1, 6],
+                                        self.available_masks, self.occupied)
+        self.available = self.update_available(self.available, [11, 1],
+                                        self.available_masks, self.occupied)
+        self.available = self.update_available(self.available, [6, 1],
+                                        self.available_masks, self.occupied)
+        self.available = self.update_available(self.available, [6, 11],
+                                        self.available_masks, self.occupied)
+        self.available = self.update_available(self.available, [11, 6],
+                                        self.available_masks, self.occupied)
 
     def update_state(self, move):
         self.state[move.coord1_i, move.coord1_j] = move.colour1
         self.state[move.coord2_i, move.coord2_j] = move.colour2
 
-    def get_next_state(self, move):
+    def peak_board_update(self, move):
         nextState = np.copy(self.state)
-        nextState[move.coord1_i, move.coord1_j] = move.colour1
+        nextState[move.coord2_i, move.coord2_j] = move.colour1
         nextState[move.coord2_i, move.coord2_j] = move.colour2
-        return nextState
+
+        nextOccupied = np.copy(self.occupied)
+        nextOccupied[move.coord2_i, move.coord2_j] = 1
+        nextOccupied[move.coord2_i, move.coord2_j] = 1
+
+        coords = [move.coord2_i, move.coord2_j]
+        nextAvailable = np.copy(self.available)
+        nextAvailable = self.update_available(nextAvailable,
+                                              coords,
+                                              self.available_masks,
+                                              nextOccupied)
+
+        return (nextState, nextOccupied, nextAvailable)
 
     def update_occupied(self, move):
         self.occupied[move.coord1_i, move.coord1_j] = 1
@@ -84,23 +102,43 @@ class Board:
         if i > self.n - 1:
             return "bottom"
 
-    def update_available(self, grid, c):
+    def update_available(self, grid, c, available_masks, occupied):
         # c is coord of newly placed tile hex
         board_area = self.get_area_of_board(c[0])
-        grid[c[0]-1:c[0]+2, c[1]-1:c[1]+2] += self.available_masks[board_area]
+        grid[c[0]-1:c[0]+2, c[1]-1:c[1]+2] += available_masks[board_area]
         grid[grid > 0] = 1
         grid[grid < 1] = 0
-        grid[self.occupied == 1] = 0
+        grid[occupied == 1] = 0
         return grid
 
     def update_board(self, move):
         self.update_state(move)
         self.update_occupied(move)
-        self.available = self.update_available(self.available, [move.coord1_i, move.coord1_j])
-        self.available = self.update_available(self.available, [move.coord2_i, move.coord2_j])
+        self.available = self.update_available(self.available,
+                                               [move.coord1_i, move.coord1_j],
+                                               self.available_masks,
+                                               self.occupied)
+        self.available = self.update_available(self.available,
+                                               [move.coord2_i, move.coord2_j],
+                                               self.available_masks,
+                                               self.occupied)
+        self.filter_occupied_and_available()
         if self.move_num == 1:
             self.first_move = deepcopy(move)
         self.move_num += 1
+
+    def filter_occupied_and_available(self):
+        # filter single spaces that can't connected to any other ones
+        idxs = np.where(self.available == 1)
+        positions = np.stack([idxs[0], idxs[1]], axis=1)
+        for position_idx in range(positions.shape[0]):
+            i, j = positions[position_idx, :]
+            board_area = self.get_area_of_board(i)
+            patch = self.available[i-1:i+2, j-1:j+2] * \
+                    self.available_masks[board_area]
+            if np.sum(patch) == 0:
+                self.occupied[i, j] = 1
+                self.available[i, j] = 0
 
     def get_all_possible_moves(self):
         # NOTE: The possible moves generated here includes "reflections". So they
@@ -117,7 +155,8 @@ class Board:
 
         for position_idx in range(positions.shape[0]):
             i, j = positions[position_idx, :]
-            expanded_available = self.update_available(available_copy, [i, j])
+            expanded_available = self.update_available(available_copy, [i, j],
+                                        self.available_masks, self.occupied)
             board_area = self.get_area_of_board(i)
             check = expanded_available[i-1:i+2, j-1:j+2] * self.available_masks[board_area]
             check[1, 1] = 0
@@ -176,6 +215,65 @@ class Board:
                         else:
                             following_direction = False
         return move_score.tolist()
+
+    def peak_move_score(self, board_state, move):
+        move_score = np.zeros((6,), dtype='int32')
+        for i, j, c in move.iterator():
+            board_area = self.get_area_of_board(i)
+
+            patch = board_state[i-1:i+2, j-1:j+2] * self.available_masks[board_area]
+            check = (patch == c)
+            if np.sum(check) > 0:
+                idxs = np.where(check == True)
+                coords = np.stack([idxs[0], idxs[1]], axis=1).tolist()
+                directions = [self.direction_masks[board_area][x, y]
+                    for x, y in coords]
+                for direction in directions:
+                    i1, j1 = i, j
+                    following_direction = True
+                    while following_direction:
+                        i1, j1 = self.step_in_direction(direction, i1, j1)
+                        if board_state[i1, j1] == c:
+                            move_score[c-1] += 1
+                        else:
+                            following_direction = False
+        return move_score.tolist()
+
+    def peak_hex_score(self, i, j, c, board_state):
+        score = 0
+        board_area = self.get_area_of_board(i)
+        patch = board_state[i-1:i+2, j-1:j+2] * self.available_masks[board_area]
+        check = (patch == c)
+        if np.sum(check) > 0:
+            idxs = np.where(check == True)
+            coords = np.stack([idxs[0], idxs[1]], axis=1).tolist()
+            directions = [self.direction_masks[board_area][x, y]
+                          for x, y in coords]
+            for direction in directions:
+                i1, j1 = i, j
+                following_direction = True
+                while following_direction:
+                    i1, j1 = self.step_in_direction(direction, i1, j1)
+                    if board_state[i1, j1] == c:
+                        score += 1
+                    else:
+                        following_direction = False
+        return score
+
+    def get_hex_scores(next_board_state, next_board_available):
+        hex_scores = np.zeros((next_board_available.shape[0],
+                               next_board_available.shape[1], 6, 10))
+        idxs = np.where(next_board_available == 1)
+        positions = np.stack([idxs[0], idxs[1]], axis=1)
+
+        for position_idx in range(positions.shape[0]):
+            i, j = positions[position_idx, :]
+            for c in range(1, 7):
+                hex_colour_score = peak_hex_score(i, j, c, next_board_state)
+                hex_colour_score = np.clip(0, 10) #*** check 10 or 9 ***
+                hex_scores[i, j, c-1, hex_colour_score] += 1
+
+        return hex_scores
 
 class Move:
     """Store grid coordinates and colours (by their numbers)"""

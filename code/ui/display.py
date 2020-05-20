@@ -28,8 +28,13 @@ class Display:
         self.screen = screen
         self.last_move = None
 
+        self.game_type = params["game_type"]
         self.player1_name = params[1]["name"]
         self.player2_name = params[2]["name"]
+
+        self.player_type = {}
+        self.player_type[1] = params[1]["player_type"]
+        self.player_type[2] = params[2]["player_type"]
 
         self.deck = {}
         self.deck[1] = [None] * 6
@@ -185,6 +190,9 @@ class Display:
             pg.display.flip()
 
     def remove_tile_from_deck(self, deck_num, tile):
+        if self.game_type == "real" and self.player_type[deck_num] == "human":
+            return None # Hack for when we don't know real player's deck
+
         if tile in self.deck[deck_num]:
             deck_idx = self.deck[deck_num].index(tile)
         else:
@@ -198,6 +206,8 @@ class Display:
             pg.display.flip()
 
     def tile_is_in_deck(self, deck_num, tile):
+        if self.game_type == "real": # Hack as we don't know real player's deck
+            return True
         if tile in self.deck[deck_num] or flip_tile(tile) in self.deck[deck_num]:
             return True
         else:

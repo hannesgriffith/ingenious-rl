@@ -2,8 +2,10 @@ import random as rn
 
 from game.board import Board
 from game.tiles import Tiles
-from game.player import get_player
+from game.player import get_player, Deck, Score
 from learn.representation import get_representation
+from learn.value import get_value_type
+from learn.network_tf1_2 import get_network
 
 # option to replace tiles in deck
 # class to set up configuration, rather than get functions
@@ -14,6 +16,22 @@ def get_gameplay(params):
         return RealGameplay(params)
     elif params["game_type"] == "computer":
         return ComputerGameplay(params)
+    elif params["game_type"] == "training":
+        return TrainingGameplay(params)
+    else:
+        assert False
+
+def get_strategy_types(params):
+    strategy_type_1 = None
+    strategy_type_2 = None
+
+    if params[1]["player_type"] == "computer":
+        strategy_type_1 = params[1]["strategy_type"]
+
+    if params[2]["player_type"] == "computer":
+        strategy_type_2 = params[2]["strategy_type"]
+
+    return strategy_type_1, strategy_type_2
 
 class RealGameplay:
     def __init__(self, params):
@@ -27,9 +45,25 @@ class RealGameplay:
 
     def initialise_game(self, player_to_start):
         self.board = Board()
-        self.players[1] = get_player(1, self.board, None, self.params)
-        self.players[2] = get_player(2, self.board, None, self.params)
+        self.tiles = Tiles()
+
+        strat_1, strat_2 = get_strategy_types(self.params)
+        self.players[1] = get_player(self.params[1]["player_type"], 1,
+                                     self.params[1]["name"], self.board,
+                                     self.tiles, strat_1)
+        self.players[2] = get_player(self.params[2]["player_type"],2,
+                                     self.params[2]["name"], self.board,
+                                     self.tiles, strat_2)
+
         self.turn_of = self.get_other_player(player_to_start)
+        self.other = self.get_other_player(self.turn_of)
+        if self.params["representation"]:
+            self.representation = get_representation(self.params)
+
+        for i in [1, 2]:
+            if self.params[i]["strategy_type"] == "rl1":
+                self.players[i].strategy.set_model(get_network(self.params[i]))
+                self.players[i].strategy.model.load_weights(self.params[i]["ckpt_path"])
 
     def get_other_player(self, player):
         other_player = [1, 2]
@@ -87,14 +121,13 @@ class RealGameplay:
             else:
                 raise ValueError('Unrecognised response item.')
 
-        if self.number_moves > 20: # Games normally take 38/39 moves
-            game_finished = self.check_if_game_finished()
-            if game_finished:
-                request.add_update_score(1, self.players[1].get_score())
-                request.add_update_score(2, self.players[2].get_score())
-                winner = self.find_winner()
-                request.add_game_finished(self.turn_of, winner)
-                return request
+        game_finished = self.check_if_game_finished()
+        if game_finished:
+            request.add_update_score(1, self.players[1].get_score())
+            request.add_update_score(2, self.players[2].get_score())
+            winner = self.find_winner()
+            request.add_game_finished(self.turn_of, winner)
+            return request
 
         if self.ingenious:
             request.add_display_message(self.turn_of, "Ingenious! Go again :)")
@@ -106,7 +139,11 @@ class RealGameplay:
             request.add_request_move(self.turn_of)
 
         if self.players[self.turn_of].player_type == "computer":
-            move_output = self.players[self.turn_of].make_move()
+            move_output = self.players[self.turn_of].make_move(
+                        self.players,
+                        self.turn_of,
+                        self.representation.generate
+            )
             self.ingenious, chosen_move, score, should_exchange = move_output
             request.add_make_move(self.turn_of, chosen_move)
             self.num_to_pickup += 1
@@ -134,12 +171,26 @@ class ComputerGameplay:
     def initialise_game(self, _):
         self.board = Board()
         self.tiles = Tiles()
-        self.players[1] = get_player(1, self.board, self.tiles, self.params)
-        self.players[2] = get_player(2, self.board, self.tiles, self.params)
+
+        strat_1, strat_2 = get_strategy_types(self.params)
+        self.players[1] = get_player(self.params[1]["player_type"], 1,
+                                     self.params[1]["name"], self.board,
+                                     self.tiles, strat_1)
+        self.players[2] = get_player(self.params[2]["player_type"],2,
+                                     self.params[2]["name"], self.board,
+                                     self.tiles, strat_2)
+
         self.turn_of = rn.choice([1, 2])
         self.other = self.get_other_player(self.turn_of)
         self.players[self.other].pick_up()
         self.players[self.turn_of].pick_up()
+        if self.params["representation"]:
+            self.representation = get_representation(self.params)
+
+        for i in [1, 2]:
+            if self.params[i]["strategy_type"] == "rl1":
+                self.players[i].strategy.set_model(get_network(self.params[i]))
+                self.players[i].strategy.model.load_weights(self.params[i]["ckpt_path"])
 
     def get_other_player(self, player):
         other_player = [1, 2]
@@ -200,14 +251,13 @@ class ComputerGameplay:
             else:
                 raise ValueError('Unrecognised response item.')
 
-        if self.number_moves > 20: # Games normally take 38/39 moves
-            game_finished = self.check_if_game_finished()
-            if game_finished:
-                request.add_update_score(1, self.players[1].get_score())
-                request.add_update_score(2, self.players[2].get_score())
-                winner = self.find_winner()
-                request.add_game_finished(self.turn_of, winner)
-                return request
+        game_finished = self.check_if_game_finished()
+        if game_finished:
+            request.add_update_score(1, self.players[1].get_score())
+            request.add_update_score(2, self.players[2].get_score())
+            winner = self.find_winner()
+            request.add_game_finished(self.turn_of, winner)
+            return request
 
         if self.ingenious:
             request.add_display_message(self.turn_of, "Ingenious! Go again :)")
@@ -219,7 +269,11 @@ class ComputerGameplay:
             request.add_request_move(self.turn_of)
 
         if self.players[self.turn_of].player_type == "computer":
-            move_output = self.players[self.turn_of].make_move()
+            move_output = self.players[self.turn_of].make_move(
+                        self.players,
+                        self.turn_of,
+                        self.representation.generate
+            )
             self.ingenious, chosen_move, score, should_exchange = move_output
             request.add_make_move(self.turn_of, chosen_move)
             request.add_update_score(self.turn_of, score)
@@ -247,14 +301,25 @@ class TrainingGameplay:
     def initialise_game(self, player_1, player_2):
         self.board = Board()
         self.tiles = Tiles()
-        self.representation = get_representation(self.params["representation"])
-        # self.players[1] = get_player(1, self.board, self.tiles, self.params)
-        # self.players[2] = get_player(2, self.board, self.tiles, self.params)
-        self.players[1], self.players[2] = player_1, player_2
+
+        self.players[1] = player_1
+        self.players[2] = player_2
+        self.players[1].board = self.board
+        self.players[2].board = self.board
+        self.players[1].tiles = self.tiles
+        self.players[2].tiles = self.tiles
+        self.players[1].deck = Deck(tiles=self.tiles)
+        self.players[2].deck = Deck(tiles=self.tiles)
+        self.players[1].score = Score()
+        self.players[2].score = Score()
+
+        self.representation = get_representation(self.params)
+        self.move_value = get_value_type(self.params)
         self.turn_of = rn.choice([1, 2])
         self.other = self.get_other_player(self.turn_of)
         self.players[self.turn_of].pick_up()
         self.players[self.other].pick_up()
+        self.move_number = 0
 
     def get_other_player(self, player):
         other_player = [1, 2]
@@ -283,7 +348,7 @@ class TrainingGameplay:
                 return 1
         return 0
 
-    def next(self, response):
+    def next(self, generate_representation=True):
         if not self.ingenious:
             if self.should_exchange[self.turn_of] and \
                     self.players[self.turn_of].can_exchange_tiles():
@@ -291,40 +356,70 @@ class TrainingGameplay:
             else:
                 self.players[self.turn_of].pick_up()
 
-        if self.game_has_finished():
-            winner = self.find_winner()
-        else:
-            winner = None
-
         if self.ingenious:
             self.ingenious = False
         else:
             self.switch_player()
 
-        move_output = self.players[self.turn_of].make_move()
+        move_output = self.players[self.turn_of].make_move(
+            self.players,
+            self.turn_of,
+            self.representation.generate
+        )
         self.ingenious, chosen_move, score, should_exchange = move_output
         self.should_exchange[self.turn_of] = should_exchange
 
-        move_representation = self.representation.generate(self.board,
-                                                           self.players,
-                                                           self.turn_of,
-                                                           self.ingenious,
-                                                           should_exchange,
-                                                           self.move_number)
+        if generate_representation:
+            next_board_state = (self.board.state,
+                                self.board.occupied,
+                                self.board.available)
+            scores = (self.players[self.turn_of].get_score(),
+                      self.players[self.other].get_score())
+            current_deck = self.players[self.turn_of].deck.get_deck_copy()
+            move_representations = self.representation.generate(next_board_state,
+                                                               scores,
+                                                               current_deck,
+                                                               self.turn_of,
+                                                               self.ingenious,
+                                                               should_exchange,
+                                                               self.move_number)
+        else:
+            move_representations = None
 
-        return move_representation, winner
+        if self.game_has_finished():
+            winner = self.find_winner()
+        else:
+            winner = None
+
+        # print("Move number {}".format(self.move_number))
+        self.move_number += 1
+        return move_representations, winner
+
+    def play_test_game(self, p1, p2):
+        while True:
+            self.initialise_game(p1, p2)
+            winner = None
+            while winner is None:
+                _, winner = self.next(generate_representation=False)
+            if winner !=0:
+                return winner
 
     def generate_episode(self, p1, p2):
         while True:
             self.initialise_game(p1, p2)
             moves = []
             winner = None
+            i = 0
             while winner is None:
-                move_repr, winner, move_num = self.next()
-                moves.append(move_repr)
+                i += 1
+                # print("move", i)
+                move_representations, winner = self.next()
+                moves.extend(move_representations)
 
             if winner != 0:
-                return calculate_values(moves, move_num, winner)
+                updated_moves = self.move_value.add_values_for_episode(moves,
+                                    winner)
+                return winner, updated_moves
 
 class Request:
     def __init__(self):

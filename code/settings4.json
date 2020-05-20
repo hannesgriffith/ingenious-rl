@@ -1,0 +1,20 @@
+{
+    "1": {
+        "name": "Ingenious AI 1",
+        "player_type": "computer",
+        "strategy_type": "rl1",
+        "network_type": "network1",
+        "ckpt_path": "finished_ckpts/best_weights.ckpt",
+        "show_deck": true
+    },
+    "2": {
+        "name": "Ingenious AI 2",
+        "player_type": "computer",
+        "strategy_type": "rl1",
+        "network_type": "network1",
+        "ckpt_path": "finished_ckpts/weights-10000.ckpt",
+        "show_deck": true
+    },
+    "game_type": "computer",
+    "representation": "features_1_one_hot"
+}
