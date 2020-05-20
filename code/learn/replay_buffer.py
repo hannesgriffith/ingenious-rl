@@ -36,8 +36,8 @@ class ReplayBuffer(object):
         scaled_probs = self.probs ** self.temp
         probs_norm = (scaled_probs / np.sum(scaled_probs))
         sampled_idxs = np.random.choice(self.buffer_size, size=num_to_sample, replace=False, p=probs_norm)
-        examples, labels, credit = self.buffer.get_examples_by_idxs(sampled_idxs)
-        return examples, labels, sampled_idxs, credit
+        examples, labels = self.buffer.get_examples_by_idxs(sampled_idxs)
+        return examples, labels, sampled_idxs
 
     def preprocess(self, inputs, labels):
         inputs_augmented = self.buffer.augment(*inputs)
@@ -47,6 +47,6 @@ class ReplayBuffer(object):
         return inputs_prepared, inputs_augmented, labels
 
     def sample_training_minibatch(self):
-        examples, labels, sampled_idxs, credit = self.sample_examples(self.batch_size)
+        examples, labels, sampled_idxs = self.sample_examples(self.batch_size)
         examples, vis_examples, labels = self.preprocess(examples, labels)
-        return examples, labels, vis_examples, sampled_idxs, credit
+        return examples, labels, vis_examples, sampled_idxs

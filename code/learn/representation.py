@@ -18,8 +18,8 @@ repr_spec = [
 
 @jitclass(repr_spec)
 class RepresentationGenerator:
-    def __init__(self, version):
-        self.version = version
+    def __init__(self):
+        self.version = 1
 
     def generate(self, board, deck, score, other_score, ingenious, num_ingenious, can_exchange, should_exchange, turn_of):
         board_repr = board.get_state_copy() # 11 x 11 x 8 (i x j x [6 colours, occupied, available])
@@ -100,7 +100,7 @@ class RepresentationGenerator:
         return new_reprs_buffer, possible_moves_subset
 
     def get_new_reprs_buffer(self):
-        return RepresentationsBuffer(self.version)
+        return RepresentationsBuffer()
 
 reprs_buffer_spec = [
     ('version', uint8),
@@ -116,8 +116,8 @@ reprs_buffer_spec = [
 
 @jitclass(reprs_buffer_spec)
 class RepresentationsBuffer():
-    def __init__(self, version):
-        self.version = version
+    def __init__(self):
+        self.version = 1
         self.size = 0
         self.empty = 1
 
@@ -179,69 +179,9 @@ class RepresentationsBuffer():
         return x, y, credit
 
     def augment(self, board_repr, deck_repr, scores_repr, general_repr):
-        if self.version == 1:
-            return self.augment_v1(board_repr, deck_repr, scores_repr, general_repr)
-        elif self.version == 2:
-            return self.augment_v2(board_repr, deck_repr, scores_repr, general_repr)
-
-    # def augment_v1(self, board_repr, deck_repr, scores_repr, general_repr):
-    #     randint1 = np.random.randint(0, high=6)
-    #     randint2 = np.random.randint(0, high=5)
-    #     flip_ordering = self.get_board_flip_ordering(randint1)
-
-    #     ordering = np.arange(6)
-    #     ordering = ordering[flip_ordering]
-    #     ordering = np.roll(ordering, randint2)
-
-    #     board_ordering = np.concatenate((ordering, np.array((6, 7)))).astype(np.uint8)
-    #     board_repr = board_repr[:, :, :, board_ordering] # b x 11 x 11 x 8
-    #     deck_repr = deck_repr[:, :, ordering] # b x 2 x 6
-    #     scores_repr = scores_repr[:, :, ordering] # b x 2 x 6
-
-    #     return (board_repr, deck_repr, scores_repr, general_repr)
-
-    def augment_v1(self, board_repr, deck_repr, scores_repr, general_repr):
-        ordering = np.array((0, 1, 2, 3, 4, 5)).astype(np.uint8)
-        np.random.shuffle(ordering)
-        board_ordering = np.concatenate((ordering, np.array((6, 7)))).astype(np.uint8)
-
-        board_repr = board_repr[:, :, :, board_ordering] # b x 11 x 11 x 8
-        deck_repr = deck_repr[:, :, ordering] # b x 2 x 6
-        scores_repr = scores_repr[:, :, ordering] # b x 2 x 6
-
-        return (board_repr, deck_repr, scores_repr, general_repr)
-
-    # def augment_v2(self, board_repr, deck_repr, scores_repr, general_repr):
-    #     n = board_repr.shape[0]
-
-    #     for i in range(n):
-    #         randint1 = np.random.randint(0, high=6)
-    #         randint2 = np.random.randint(0, high=5)
-    #         flip_ordering = self.get_board_flip_ordering(randint1)
-
-    #         ordering = np.arange(6)
-    #         ordering = ordering[flip_ordering]
-    #         ordering = np.roll(ordering, randint2)
-    #         board_ordering = np.concatenate((ordering, np.array((6, 7)))).astype(np.uint8)
-
-    #         board_repr_example = board_repr[i]
-    #         deck_repr_example = deck_repr[i]
-    #         scores_repr_example = scores_repr[i]
-
-    #         board_repr_example_augmented = board_repr_example[:, :, board_ordering] # b x 11 x 11 x 8
-    #         deck_repr_example_augmented = deck_repr_example[:, ordering] # b x 2 x 6
-    #         scores_repr_example_augmented = scores_repr_example[:, ordering] # b x 2 x 6
-
-    #         board_repr[i] = board_repr_example_augmented
-    #         deck_repr[i] = deck_repr_example_augmented
-    #         scores_repr[i] = scores_repr_example_augmented
-
-    #     return (board_repr, deck_repr, scores_repr, general_repr)
-
-    def augment_v2(self, board_repr, deck_repr, scores_repr, general_repr):
         n = board_repr.shape[0]
-
         ordering = np.array((0, 1, 2, 3, 4, 5)).astype(np.uint8)
+
         for i in range(n):
             np.random.shuffle(ordering)
             board_ordering = np.concatenate((ordering, np.array((6, 7)))).astype(np.uint8)
@@ -285,24 +225,6 @@ class RepresentationsBuffer():
         return (board_repr_normalised, deck_repr_normalised, scores_repr_normalised, general_repr_normalised)
 
     def prepare(self, board_repr, deck_repr, scores_repr, general_repr):
-        if self.version == 1:
-            return self.prepare_v1(board_repr, deck_repr, scores_repr, general_repr)
-        elif self.version == 2:
-            return self.prepare_v2(board_repr, deck_repr, scores_repr, general_repr)
-
-    def prepare_v1(self, board_repr, deck_repr, scores_repr, general_repr):
-        b = board_repr.shape[0]
-
-        deck_repr_flat = deck_repr.reshape(b, -1)
-        scores_repr_flat = scores_repr.reshape(b, -1)
-        general_repr_flat = general_repr
-        
-        grid_input = np.transpose(board_repr, (0, 3, 1, 2)) # NHWC -> NCHW
-        vector_input = np.hstack((deck_repr_flat, scores_repr_flat, general_repr_flat))
-
-        return (grid_input, vector_input)
-
-    def prepare_v2(self, board_repr, deck_repr, scores_repr, general_repr):
         b = board_repr.shape[0]
 
         deck_repr_flat = deck_repr.reshape(b, -1)

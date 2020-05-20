@@ -45,35 +45,3 @@ def main():
 
 if __name__ == "__main__" :
     main()
-
-# Max vs Max:                           Player 1 win rate: 0.505, player 2 win rate: 0.495
-# Max vs Random:                        Player 1 win rate: 1.000, player 2 win rate: 0.000
-# Max vs Increase Min:                  Player 1 win rate: 0.571, player 2 win rate: 0.429
-# Max vs Increase Other Min:            Player 1 win rate: 0.788, player 2 win rate: 0.212
-# Max vs Reduce Deficit -5:             Player 1 win rate: 0.509, player 2 win rate: 0.491
-# Max vs Reduce Deficit -2:             Player 1 win rate: 0.539, player 2 win rate: 0.461
-# Max vs Reduce Deficit 0:              Player 1 win rate: 0.536, player 2 win rate: 0.464
-# Max vs Reduce Deficit 2:              Player 1 win rate: 0.493, player 2 win rate: 0.507
-# Max vs Reduce Deficit 5:              Player 1 win rate: 0.458, player 2 win rate: 0.542
-# Max vs Reduce Deficit 8:              Player 1 win rate: 0.462, player 2 win rate: 0.538
-# Max vs Reduce Deficit 15:             Player 1 win rate: 0.513, player 2 win rate: 0.487
-# Max vs Mixed 1 (-5, 10):              Player 1 win rate: 0.497, player 2 win rate: 0.503
-# Max vs Mixed 1 (-3, 8):               Player 1 win rate: 0.507, player 2 win rate: 0.493
-# Max vs Mixed 1 (3, 10):               Player 1 win rate: 0.499, player 2 win rate: 0.501
-# Max vs Mixed 1 (0, 5):                Player 1 win rate: 0.482, player 2 win rate: 0.518
-# Max vs Mixed 2:                       Player 1 win rate: 0.561, player 2 win rate: 0.439
-# Reduce Deficit 5 vs Random:           Player 1 win rate: 1.000, player 2 win rate: 0.000
-# Reduce Deficit 5 vs Increase Min:     Player 1 win rate: 0.666, player 2 win rate: 0.334
-# Reduce Deficit 5 vs Increase Min2:    Player 1 win rate: 0.826, player 2 win rate: 0.174
-# Reduce Deficit 5 vs Mixed 1:          Player 1 win rate: 0.472, player 2 win rate: 0.528
-# Reduce Deficit 5 vs Mixed 2:          Player 1 win rate: 0.620, player 2 win rate: 0.380
-# Mixed 3 (15) vs Max:                  Player 1 win rate: 0.506, player 2 win rate: 0.494
-# Mixed 3 (15) vs Reduce Deficit 5:     Player 1 win rate: 0.487, player 2 win rate: 0.513
-# Mixed 3 (15) vs Mixed 1:              Player 1 win rate: 0.503, player 2 win rate: 0.497
-# Mixed 3 (10) vs Max:                  Player 1 win rate: 0.476, player 2 win rate: 0.524
-# Mixed 3 (10) vs Reduce Deficit 5:     Player 1 win rate: 0.476, player 2 win rate: 0.524
-# Mixed 3 (10) vs Mixed 1:              Player 1 win rate: 0.474, player 2 win rate: 0.526
-# Mixed 4 vs Max:                       Player 1 win rate: 0.543, player 2 win rate: 0.457
-# Mixed 4 vs Reduce Deficit 5:          Player 1 win rate: 0.519, player 2 win rate: 0.481
-# Mixed 4 vs Mixed 1:                   Player 1 win rate: 0.508, player 2 win rate: 0.492
-# Mixed 4 vs Mixed 3:                   Player 1 win rate: 0.545, player 2 win rate: 0.455

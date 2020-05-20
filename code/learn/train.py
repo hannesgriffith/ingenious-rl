@@ -103,17 +103,15 @@ class SupervisedTrainingSession:
             self.replay_buffer.add(new_reprs)
 
     def apply_learning_update(self):
-        inputs, labels, vis_inputs, idxs, credit = self.replay_buffer.sample_training_minibatch()
+        inputs, labels, vis_inputs, idxs = self.replay_buffer.sample_training_minibatch()
 
         grid_input_device = torch.tensor(inputs[0], dtype=torch.float32, device=self.device)
         vector_input_device = torch.tensor(inputs[1], dtype=torch.float32, device=self.device)
         labels_device = torch.tensor(labels, dtype=torch.float32, device=self.device)
-        credit_device = torch.tensor(credit, dtype=torch.float32, device=self.device)
 
         self.optimizer.zero_grad()
         predictions = self.net(grid_input_device, vector_input_device)
         loss = self.criterion(torch.squeeze(predictions), torch.squeeze(labels_device))
-        loss = (loss * credit_device).mean()
         loss.backward()
         self.optimizer.step()
 
@@ -122,35 +120,9 @@ class SupervisedTrainingSession:
         predictions_np = torch.squeeze(predictions).detach().cpu().numpy().astype(np.float32)
 
         diffs = np.abs(labels_np - predictions_np)
-        original_diffs_magnitude = np.sum(diffs)
-        scaled_diffs = diffs * credit
-        diffs = original_diffs_magnitude * scaled_diffs / np.sum(scaled_diffs)
-
         self.replay_buffer.update_probs(idxs, diffs)
         mean_abs_error = np.mean(diffs) 
         return loss_np, mean_abs_error, (vis_inputs, labels_np, predictions_np)
-
-    # def apply_learning_update(self):
-    #     inputs, labels, vis_inputs, idxs = self.replay_buffer.sample_training_minibatch()
-
-    #     grid_input_device = torch.tensor(inputs[0], dtype=torch.float32, device=self.device)
-    #     vector_input_device = torch.tensor(inputs[1], dtype=torch.float32, device=self.device)
-    #     labels_device = torch.tensor(labels, dtype=torch.float32, device=self.device)
-
-    #     self.optimizer.zero_grad()
-    #     predictions = self.net(grid_input_device, vector_input_device)
-    #     loss = self.criterion(torch.squeeze(predictions), torch.squeeze(labels_device))
-    #     loss.backward()
-    #     self.optimizer.step()
-
-    #     labels_np = np.squeeze(labels).astype(np.float32)
-    #     loss_np = loss.detach().cpu().numpy().astype(np.float32)
-    #     predictions_np = torch.squeeze(predictions).detach().cpu().numpy().astype(np.float32)
-
-    #     diffs = np.abs(labels_np - predictions_np)
-    #     self.replay_buffer.update_probs(idxs, diffs)
-    #     mean_abs_error = np.mean(diffs) 
-    #     return loss_np, mean_abs_error, (vis_inputs, labels_np, predictions_np)
 
     def apply_n_learning_updates(self, n):
         self.net = self.net.train()
@@ -192,7 +164,7 @@ class SupervisedTrainingSession:
         return p1_win_rate, avg_avg_loss, mean_abs_error
 
     def add_graph_to_logs(self):
-        inputs, _, _, _, _ = self.replay_buffer.sample_training_minibatch()
+        inputs, _, _, _ = self.replay_buffer.sample_training_minibatch()
         grid_input_device = torch.tensor(inputs[0], dtype=torch.float32, device=self.device)
         vector_input_device = torch.tensor(inputs[1], dtype=torch.float32, device=self.device)
         self.writer.add_graph(self.net, (grid_input_device, vector_input_device))
@@ -357,7 +329,7 @@ class SupervisedTrainingSession:
 #             self.replay_buffer.add(new_reprs)
 
 #     def apply_learning_update(self):
-#         inputs, labels, vis_inputs, idxs, credit = self.replay_buffer.sample_training_minibatch()
+#         inputs, labels, vis_inputs, idxs = self.replay_buffer.sample_training_minibatch()
 
 #         grid_input_device = torch.tensor(inputs[0], dtype=torch.float32, device=self.device)
 #         vector_input_device = torch.tensor(inputs[1], dtype=torch.float32, device=self.device)
@@ -421,7 +393,7 @@ class SupervisedTrainingSession:
 #         return p1_win_rate, avg_avg_loss, mean_abs_error
 
 #     def add_graph_to_logs(self):
-#         inputs, _, _, _, _ = self.replay_buffer.sample_training_minibatch()
+#         inputs, _, _, _ = self.replay_buffer.sample_training_minibatch()
 #         grid_input_device = torch.tensor(inputs[0], dtype=torch.float32, device=self.device)
 #         vector_input_device = torch.tensor(inputs[1], dtype=torch.float32, device=self.device)
 #         self.writer.add_graph(self.net, (grid_input_device, vector_input_device))
