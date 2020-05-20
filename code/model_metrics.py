@@ -12,7 +12,7 @@ from game.tiles import Tiles
 from game.player import get_player
 from learn.representation import get_representation
 
-N_GAMES = 100
+N_GAMES = 1000
 
 def play_game(gameplay, params_1, params_2):
     board, tiles = Board(), Tiles()
@@ -22,24 +22,13 @@ def play_game(gameplay, params_1, params_2):
     return winner
 
 def main():
-    test_player_params = {"player_type": "computer", "strategy_type": "rl", "network_type": "smaller", "ckpt_path": "logs/smaller_2020-05-16_08-58/best_rule.pth"}
+    test_player_params = {"player_type": "computer", "strategy_type": "mixed_4"}
     other_player_params = {
         "random": {"player_type": "computer", "strategy_type": "random"},
         "increase_min": {"player_type": "computer", "strategy_type": "increase_min"},
         "max": {"player_type": "computer", "strategy_type": "max"},
         "reduce_deficit": {"player_type": "computer", "strategy_type": "reduce_deficit"},
-        "mixed_4": {"player_type": "computer", "strategy_type": "mixed_4"},
-        # "mlp_only_v1": {"player_type": "computer", "strategy_type": "rl", "network_type": "mlp_only", "ckpt_path": "logs/mlp_only_2020-05-02_14-39/best.pth"},
-        "mlp2_only_v1": {"player_type": "computer", "strategy_type": "rl", "network_type": "mlp2_only", "ckpt_path": "logs/mlp2_only_2020-05-02_22-52/best.pth"},
-        # "mlp_only_v2": {"player_type": "computer", "strategy_type": "rl", "network_type": "mlp_only", "ckpt_path": "logs/mlp_only_2020-05-03_15-51/best.pth"},
-        # "simple_convnet_v1": {"player_type": "computer", "strategy_type": "rl", "network_type": "simple_convnet", "ckpt_path": "logs/simple_convnet_2020-05-04_19-40/best.pth"},
-        # "mlp2_only_extra_features": {"player_type": "computer", "strategy_type": "rl", "network_type": "mlp2_only_extra_features", "ckpt_path": "logs/mlp2_only_extra_features_2020-05-05_23-13/best.pth"},
-        # "mlp2_only_v3": {"player_type": "computer", "strategy_type": "rl", "network_type": "mlp2_only", "ckpt_path": "logs/mlp2_only_2020-05-06_18-41/best.pth"},
-        # "simple_convnet_fc": {"player_type": "computer", "strategy_type": "rl", "network_type": "simple_convnet_fc", "ckpt_path": "logs/simple_convnet_fc_2020-05-07_18-03/good_early_1.pth"},
-        # "bigger_self": {"player_type": "computer", "strategy_type": "rl", "network_type": "debug", "ckpt_path": "logs/debug_2020-05-15_15-24/best_self.pth"},
-        # "bigger_rule": {"player_type": "computer", "strategy_type": "rl", "network_type": "debug", "ckpt_path": "logs/debug_2020-05-15_15-24/best_rule.pth"},
-        # "smaller_self": {"player_type": "computer", "strategy_type": "rl", "network_type": "smaller", "ckpt_path": "logs/smaller_2020-05-16_08-58/best_self.pth"},
-        # "smaller_rule": {"player_type": "computer", "strategy_type": "rl", "network_type": "smaller", "ckpt_path": "logs/smaller_2020-05-16_08-58/best_rule.pth"},
+        "mixed_4": {"player_type": "computer", "strategy_type": "mixed_4"}
     }
 
     gameplay = get_gameplay({"game_type": "training", "representation": "v2", "value_type": "v1"})
