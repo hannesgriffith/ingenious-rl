@@ -53,7 +53,7 @@ PARAMS = {
     "test_every_n": 200,            # 1000
     "n_test_games": 30,             # 50
     "n_other_games": 30,            # 10
-    "replay_buffer_size": 100000,   # 100,000
+    "replay_buffer_size": 1000,   # 100,000
     "batch_size": 128,              # 64
     "steps_per_episode": 10,        # 2
     "initial_learning_rate": 1e-2,  # 1e-3

@@ -88,6 +88,7 @@ class TrainingSession:
 
         # print("With device: {}".format(self.params["training_device"]))
         self.model = get_network(self.params)
+        self.model.compile_model()
 
         print("Set up training loss metric")
         train_loss = []
@@ -120,9 +121,9 @@ class TrainingSession:
             self.model.save_weights(first_ckpt_path)
 
         p_training.strategy.set_model(get_network(self.params))
-        self.apply_init_learning_update(p_training.strategy.model)
+        # self.apply_init_learning_update(p_training.strategy.model)
         p_adversary.strategy.set_model(get_network(self.params))
-        self.apply_init_learning_update(p_adversary.strategy.model)
+        # self.apply_init_learning_update(p_adversary.strategy.model)
 
         if self.best_model is not None:
             print("Loading best model weights from:", self.best_model)
@@ -196,7 +197,7 @@ class TrainingSession:
 
                 latest_weights_ckpt_path = os.path.join(self.logs_dir,
                                             "latest_weights_autosave.ckpt".format(i))
-                self.model.save_weights(latest_weights_ckpt_path)
+                self.model.save_weights(latest_weights_ckpt_pat, inlude_optimser=True)
 
             if i % self.test_every_n == 0 or i == 1:
                 current_weights_ckpt_path = os.path.join(self.logs_dir,
@@ -205,7 +206,7 @@ class TrainingSession:
                                             "recent_weights.ckpt".format(i))
 
                 self.model.save_weights(current_weights_ckpt_path)
-                self.model.save_weights(recent_weights_ckpt_path)
+                self.model.save_weights(recent_weights_ckpt_path, inlude_optimser=True)
 
                 p_training.strategy.model.load_weights(current_weights_ckpt_path)
                 p_training.strategy.set_explore(False)

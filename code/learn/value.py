@@ -1,48 +1,45 @@
+import numpy as np
+from numba import jitclass, uint8, float32
+
 def get_value_type(params):
-    if params["value_type"] == "basic_1":
-        return Basic1()
-    # elif params["value_type"] == "lambda_return_1":
-    #     return LambdaReturn1(params)
+    if params["value_type"] == "v1":
+        return ValueV1()
+    if params["value_type"] == "v2":
+        return ValueV2(params["lambda"])
     else:
-        assert False
+        raise ValueError("Incorrect value function name.")
 
-class Basic1:
+value_spec_v1 = [
+    ("version", uint8)
+]
+
+@jitclass(value_spec_v1)
+class ValueV1:
     def __init__(self):
-        pass
+        self.version = 1
 
-    def add_values_for_episode(self, episode_representations, winner):
-        updated = []
-        for move_info in episode_representations:
-            grid_input, vector_input, turn_of, move_num = move_info
-            value = 1 if int(turn_of) == int(winner) else 0
-            new_move_info = (grid_input, vector_input, value)
-            updated.append(new_move_info)
-        return updated
+    def add_values_for_episode(self, representations, winner):
+        representations.values_repr[representations.turn_of_repr == winner] = 1
+        return representations
 
-# class LambdaReturn1:
-#     def __init__(self, params):
-#         self.lambda = params["lambda"]
-#
-#     def calculate_value(turn_of, winner, move_num, total_moves):
-#         if turn_of == winner:
-#             final_reward = 1.
-#         else:
-#             final_reward = -1.
-#
-#         assert False # Revisit calculating this and setting lambda
-#         moves_until_end = (total_moves - move_num) / 2.
-#         discounted_reward = final_reward * (self.lambda ** moves_until_end)
-#
-#         return discounted_reward
-#
-#     def add_values_for_episode(self, episode_representation, winner):
-#         updated = []
-#         total_moves = episode_representation[-1][-1]
-#
-#         for move_info in episode_representation:
-#             grid_input, vector_input, turn_of, move_num = move_info
-#             value = calculate_value(turn_of, winner, move_num, total_moves)
-#             new_move_info = (grid_input, vector_input, value)
-#             updated.append(new_move_info)
-#
-#         return updated
+value_spec_v2 = [
+    ("version", uint8),
+    ("l", float32)
+]
+
+@jitclass(value_spec_v2)
+class ValueV2:
+    def __init__(self, l):
+        self.version = 2
+        self.l = l
+
+    def add_values_for_episode(self, representations, winner):
+        representations.values_repr[representations.turn_of_repr == winner, 0] = 1.
+
+        move_num = representations.general_repr[:, 4].astype(np.float32)
+        moves_from_end = np.max(move_num) - move_num - 1.
+        moves_from_end[moves_from_end < 0.] = 0.
+        credit = self.l ** moves_from_end
+        representations.values_repr[:, 1] = credit
+
+        return representations

@@ -16,5 +16,5 @@
         "show_deck": true
     },
     "game_type": "computer",
-    "representation": "features_1_one_hot"
+    "representation": "v1"
 }

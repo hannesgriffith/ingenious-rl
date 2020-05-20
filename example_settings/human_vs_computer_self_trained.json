@@ -1,6 +1,6 @@
 {
     "1": {
-        "name": "Human",
+        "name": "Helen",
         "player_type": "human",
         "strategy_type": null,
         "show_deck": true
@@ -14,5 +14,5 @@
         "show_deck": false
     },
     "game_type": "computer",
-    "representation": "features_1_one_hot"
+    "representation": "v1"
 }

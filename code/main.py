@@ -5,7 +5,7 @@ from utils.io import load_json
 from game.gameplay import get_gameplay
 from ui.controller import Controller
 
-INPUT_SETTINGS = 'settings.json'
+INPUT_SETTINGS = 'settings_play.json'
 
 class App:
     def __init__(self):

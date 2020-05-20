@@ -39,7 +39,6 @@ class Network1():
                                             name='train_binary_crossentropy')]
 
         self.build_mini_resnet_model()
-        self.compile_model()
 
     def compile_model(self):
         self.model.compile(optimizer=self.optimiser,
@@ -120,11 +119,15 @@ class Network1():
         predictions = self.model.predict_on_batch(input_dict)
         return predictions
 
-    def save_model(self, filepath):
-        self.model.save(filepath)
-
-    def save_weights(self, filepath):
-        self.model.save_weights(filepath)
+    def save_weights(self, filepath, inlude_optimser=False):
+        if inlude_optimser:
+            self.model.save_weights(filepath)
+        else:
+            model_filepath = filepath.replace("ckpt", "h5")
+            self.model.save(model_filepath, include_optimizer=False)
+            dummy = get_network("computer", 1, None, None, None, "rl1")
+            dummy.load_model(model_filepath)
+            dummy.save_weights(filepath)
 
     def load_weights(self, filepath):
         self.model.load_weights(filepath)

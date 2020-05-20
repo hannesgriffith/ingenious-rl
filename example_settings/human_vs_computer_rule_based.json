@@ -11,5 +11,6 @@
         "strategy_type": "max",
         "show_deck": true
     },
-    "game_type": "computer"
+    "game_type": "computer",
+    "representation": "v1"
 }

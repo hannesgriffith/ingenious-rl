@@ -1,363 +1,330 @@
-from copy import deepcopy
-
+from numba import jitclass, uint8, int32, float32
 import numpy as np
 
-def get_other_player(player):
-    other_player = [1, 2]
-    other_player.remove(player)
-    return other_player[0]
-
-def colour_to_vector(colour):
-    vector = np.zeros((6,), dtype=np.int32)
-    vector[colour - 1] = 1
-    return vector.tolist()
-
-def invert_binary(input):
-    output = np.ones(input.shape, dtype=np.int32)
-    output[input == 1] = 0
-    return output
-
-def score_to_vector(scores_list):
-    output_vector = []
-    for colour_score in scores_list:
-        score_vector = np.zeros((19,), dtype=np.int32)
-        score_vector[colour_score] = 1
-        output_vector.append(score_vector)
-    return np.concatenate(output_vector, axis=0)
+from game.player import batch_peek_can_exchange_tiles
 
 def get_representation(params):
     type_ = params["representation"]
-    if type_ == "vanilla":
-        return RepresentationVanilla()
-    elif type_ == "vanilla_one_hot":
-        return RepresentationVanillaOneHot()
-    elif type_ == "features_1":
-        return RepresentationFeatures1()
-    elif type_ == "features_1_one_hot":
-        return RepresentationFeatures1OneHot()
+    if type_ == "v1":
+        return RepresentationGenerator(1)
+    elif type_ == "v2":
+        return RepresentationGenerator(2)
     else:
-        assert False
+        raise ValueError("Incorrect representation generator name.")
 
-class RepresentationVanilla:
-    def __init__(self):
-        pass
+repr_spec = [
+    ('version', uint8),
+    ]
 
-    def generate(self, board, players, turn_of, ingenious, should_exchange, move_num):
-        board_state = np.expand_dims(np.copy(board.state), 2)
-        board_occupied = invert_binary(np.copy(board.occupied))
-        grid_input = self.generate_grid_input(board_state,
-                                            board_occupied).astype(np.bool)
-        vector_input = self.generate_vector_input(players, turn_of, ingenious,
-                                            should_exchange).astype(np.uint8)
-        return (grid_input, vector_input, turn_of, move_num)
+@jitclass(repr_spec)
+class RepresentationGenerator:
+    def __init__(self, version):
+        self.version = version
 
-    def generate_grid_input(self, board_state, board_occupied):
-        h, w = board_state.shape
-        colours = np.arange(7).reshape(1, 1, 7) * np.ones((h, w, 7),
-                    dtype=np.int32)
-        grid_input = np.zeros((h, w, 7), dtype=np.int32)
-        grid_input[grid_input == board_state] = 1
-        grid_input[:, :, 0] = board_occupied
-        return grid_input
+    def generate(self, board, deck, score, other_score, ingenious, num_ingenious, can_exchange, should_exchange, turn_of):
+        board_repr = board.get_state_copy() # 11 x 11 x 8 (i x j x [6 colours, occupied, available])
+        deck_repr = deck.get_state_copy() # 2 x 6 ([single tiles, double tiles] x [6 colours])
 
-    def generate_vector_input(self, players, turn_of, ingenious,
-            should_exchange, move_num):
-        vector_input = []
-        vector_input.extend(int(ingenious))
-        vector_input.extend(int(should_exchange))
-        vector_input.extend(int(move_num))
-        vector_input.extend(deepcopy(players[turn_of].get_score()))
-        vector_input.extend(
-            deepcopy(players[get_other_player(turn_of)].get_score())
-            )
+        scores_repr = np.vstack((
+            np.expand_dims(score.get_score_copy(), 0),
+            np.expand_dims(other_score.get_score_copy(), 0)
+            )) # 2 x 6 ([player_turn_of, player_other x [6 colour counts]])
 
-        player_deck = deepcopy(players[turn_of].deck.deck)
-        tile_vectors = []
-        for tile in player_deck:
-            tile_vectors.append(colour_to_vector(tile[0]))
-            tile_vectors.append(colour_to_vector(tile[1]))
-        while len(tile_vectors) < 12:
-            tile_vectors.append(np.zeros((6,), dtype=np.int32).tolist())
-        for tile_vector in tile_vectors:
-            vector_input.extend(tile_vector)
+        general_repr = np.array((
+            ingenious,
+            num_ingenious,
+            can_exchange,
+            should_exchange * can_exchange, # always 0 if can't exchange
+            board.move_num), dtype=np.uint8) # (5,)
 
-        return np.array(vector_input)
+        values_repr = np.zeros(2, dtype=np.float32)
 
-class RepresentationVanillaOneHot:
-    def __init__(self):
-        pass
+        new_reprs_buffer = self.get_new_reprs_buffer()
+        new_reprs_buffer.set_single_reprs_from_scratch(board_repr, deck_repr, scores_repr, general_repr, turn_of, values_repr)
+        return new_reprs_buffer
 
-    def generate(self, board, players, turn_of, ingenious, should_exchange, move_num):
-        board_state = np.expand_dims(np.copy(board.state), 2)
-        board_occupied = invert_binary(np.copy(board.occupied))
-        grid_input = self.generate_grid_input(board_state,
-                                              board_occupied).astype(np.bool)
-        vector_input = self.generate_vector_input(players, turn_of, ingenious,
-                        should_exchange, move_num).astype(np.uint8)
-        return (grid_input, vector_input, turn_of, move_num)
+    def generate_batched(self, board, deck, score, other_score, turn_of, possible_moves):
+        b = possible_moves.shape[0] # possible moves shape: b x 8
+        board_repr = board.batch_get_updated_states(possible_moves) # b x 11 x 11 x 8
+        deck_repr = deck.batch_peek_next_states(possible_moves[:, 6:8]) # b x 2 x 6
 
-    def generate_grid_input(self, board_state, board_occupied):
-        h, w = board_state.shape
-        colours = np.arange(7).reshape(1, 1, 7) * np.ones((h, w, 7),
-                    dtype=np.int32)
-        grid_input = np.zeros((h, w, 7), dtype=np.int32)
-        grid_input[grid_input == board_state] = 1
-        grid_input[:, :, 0] = board_occupied
-        return grid_input
+        move_scores = board.batch_calculate_move_scores(possible_moves) # b x 6
+        updated_scores, ingenious, num_ingenious = score.batch_peek_next_scores(move_scores) # b x 6, b, b
 
-    def generate_vector_input(self, players, turn_of, ingenious,
-            should_exchange, move_num):
-        vector_input = []
-        vector_input.extend(int(ingenious))
-        vector_input.extend(int(should_exchange))
-        vector_input.extend(int(move_num))
+        next_decks = deck.batch_peek_next_decks(possible_moves[:, 6:8]) # b x 6 x 2
+        can_exchange = batch_peek_can_exchange_tiles(next_decks, updated_scores) # b
 
-        score1 = deepcopy(players[turn_of].get_score())
-        score2 = deepcopy(players[get_other_player(turn_of)].get_score())
-        score1_one_hot = score_to_vector(score1)
-        score2_one_hot = score_to_vector(score2)
-        vector_input.extend(score1_one_hot.tolist())
-        vector_input.extend(score2_one_hot.tolist())
+        other_score = other_score.get_score().flatten()
+        scores_repr = np.zeros((b, 2, 6)) # b x 2 x 6
+        for idx in range(b):
+            scores_repr[idx, 0, :] = updated_scores[idx]
+            scores_repr[idx, 1, :] = other_score
 
-        player_deck = deepcopy(players[turn_of].deck.deck)
-        tile_vectors = []
-        if len(player_deck) > 0:
-            for tile in player_deck:
-                tile_vectors.append(colour_to_vector(tile[0]))
-                tile_vectors.append(colour_to_vector(tile[1]))
-        while len(tile_vectors) < 12:
-            tile_vectors.append(np.zeros((6,), dtype=np.int32).tolist())
-        for tile_vector in tile_vectors:
-            vector_input.extend(tile_vector)
+        general_repr_dont_exchange = np.hstack((
+            np.expand_dims(ingenious, 1),
+            np.expand_dims(num_ingenious, 1),
+            np.expand_dims(can_exchange, 1),
+            np.zeros((b, 1), dtype=np.uint8),
+            np.ones((b, 1), dtype=np.uint8) * board.move_num
+            )) # b x 5
 
-        return np.array(vector_input)
+        general_repr_do_exchange = np.hstack((
+            np.expand_dims(ingenious, 1),
+            np.expand_dims(num_ingenious, 1),
+            np.expand_dims(can_exchange, 1),
+            np.ones((b, 1), dtype=np.uint8),
+            np.ones((b, 1), dtype=np.uint8) * board.move_num
+            )) # b x 5
 
-class RepresentationFeatures1:
-    def __init__(self):
-        pass
+        possible_moves_stacked = np.concatenate((possible_moves, possible_moves))
+        board_repr_stacked = np.concatenate((board_repr, board_repr))
+        deck_repr_stacked = np.concatenate((deck_repr, deck_repr))
+        scores_repr_stacked = np.concatenate((scores_repr, scores_repr))
+        general_repr_stacked = np.concatenate((general_repr_dont_exchange, general_repr_do_exchange))
 
-    def generate(self, board, players, turn_of, ingenious, should_exchange, move_num):
-        board_state = np.expand_dims(np.copy(board.state), 2)
-        board_occupied = invert_binary(np.copy(board.occupied))
-        board_available = np.copy(board.available)
-        grid_input = self.generate_grid_input(board_state, board_occupied,
-                        board_available).astype(np.bool)
-        vector_input = self.generate_vector_input(players, turn_of, ingenious,
-                        should_exchange, move_num).astype(np.uint8)
-        return (grid_input, vector_input, turn_of, move_num)
+        can_exchange_stacked = np.concatenate((can_exchange, can_exchange))
+        should_exchange_stacked = np.concatenate((np.zeros(b, dtype=np.uint8), np.ones(b, dtype=np.uint8)))
+        valid_idxs = np.where(((can_exchange_stacked == 0) & (should_exchange_stacked == 0)) | (can_exchange_stacked == 1))[0]
 
-    def generate_grid_input(self, board_state, board_occupied, board_available):
-        h, w = board_state.shape
-        colours = np.arange(7).reshape(1, 1, 7) * np.ones((h, w, 7),
-                    dtype=np.int32)
-        grid_input = np.zeros((h, w, 7), dtype=np.int32)
-        grid_input[grid_input == board_state] = 1
-        grid_input[:, :, 0] = board_occupied
-        board_available = np.expand_dims(board_available, 2)
-        grid_input = np.concatenate([grid_input, board_available], 2)
-        return grid_input
+        possible_moves_subset = possible_moves_stacked[valid_idxs].astype(np.uint8)
+        board_repr_subset = board_repr_stacked[valid_idxs].astype(np.uint8)
+        deck_repr_subset = deck_repr_stacked[valid_idxs].astype(np.uint8)
+        scores_repr_subset = scores_repr_stacked[valid_idxs].astype(np.uint8)
+        general_repr_subset = general_repr_stacked[valid_idxs].astype(np.uint8)
 
-    def generate_vector_input(self, players, turn_of, ingenious,
-            should_exchange, move_num):
-        vector_input = []
-        vector_input.append(int(ingenious))
-        vector_input.append(int(should_exchange))
-        vector_input.append(int(move_num))
+        turn_of_repr = np.full(valid_idxs.shape[0], turn_of, dtype=np.uint8)
+        values_repr = np.zeros((valid_idxs.shape[0], 2), dtype=np.float32)
 
-        score1 = deepcopy(players[turn_of].get_score())
-        score2 = deepcopy(players[get_other_player(turn_of)].get_score())
-        score3 = (np.array(score2) - np.array(score1)).tolist()
-        vector_input.extend(score1)
-        vector_input.extend(score2)
-        vector_input.extend(score3)
+        new_reprs_buffer = self.get_new_reprs_buffer()
+        new_reprs_buffer.set_batched_reprs_from_scratch(board_repr_subset, deck_repr_subset, scores_repr_subset, general_repr_subset, turn_of_repr, values_repr)
+        return new_reprs_buffer, possible_moves_subset
 
-        player_deck = deepcopy(players[turn_of].deck.deck)
-        tile_vectors = []
-        for tile in player_deck:
-            tile_vectors.append(colour_to_vector(tile[0]))
-            tile_vectors.append(colour_to_vector(tile[1]))
-        while len(tile_vectors) < 12:
-            tile_vectors.append(np.zeros((6,), dtype=np.int32).tolist())
-        for tile_vector in tile_vectors:
-            vector_input.extend(tile_vector)
+    def get_new_reprs_buffer(self):
+        return RepresentationsBuffer(self.version)
 
-        return np.array(vector_input)
+reprs_buffer_spec = [
+    ('version', uint8),
+    ('size', int32),
+    ('empty', uint8),
+    ('board_repr', uint8[:, :, :, :] ),
+    ('deck_repr', uint8[:, :, :] ),
+    ('scores_repr', uint8[:, :, :] ),
+    ('general_repr', uint8[:, :] ),
+    ('values_repr', float32[:, :] ),
+    ('turn_of_repr', uint8[:] ),
+    ]
 
-class RepresentationFeatures1OneHot:
-    def __init__(self):
-        pass
+@jitclass(reprs_buffer_spec)
+class RepresentationsBuffer():
+    def __init__(self, version):
+        self.version = version
+        self.size = 0
+        self.empty = 1
 
-    def generate(self, next_board_state, scores, deck, turn_of, ingenious,
-                    should_exchange, move_num):
-        board_state, board_occupied, board_available = next_board_state
+    def set_single_reprs_from_scratch(self, board_repr, deck_repr, scores_repr, general_repr, turn_of_repr, values_repr):
+        self.board_repr = np.expand_dims(board_repr, 0)
+        self.deck_repr = np.expand_dims(deck_repr, 0)
+        self.scores_repr = np.expand_dims(scores_repr, 0)
+        self.general_repr = np.expand_dims(general_repr, 0)
+        self.values_repr = np.expand_dims(values_repr, 0)
+        self.turn_of_repr = turn_of_repr
+        self.size += 1
+        self.empty = 0
 
-        grid_input1 = self.generate_grid_input(board_state, board_occupied,
-                                board_available).astype(np.bool)
-        vector_input1 = self.generate_vector_input1(ingenious, should_exchange,
-                                scores, deck).astype(np.bool)
+    def set_batched_reprs_from_scratch(self, board_repr, deck_repr, scores_repr, general_repr, turn_of_repr, values_repr):
+        self.board_repr = board_repr
+        self.deck_repr = deck_repr
+        self.scores_repr = scores_repr
+        self.general_repr = general_repr
+        self.values_repr = values_repr
+        self.turn_of_repr = turn_of_repr
+        self.size += board_repr.shape[0]
+        self.empty = 0
 
-        grid_input2 = np.flip(np.copy(grid_input1), axis=0)
-        vector_input2 = self.generate_vector_input2(ingenious, should_exchange,
-                                scores, deck).astype(np.bool)
+    def set_reprs_from_reprs(self, reprs):
+        self.board_repr = reprs.board_repr
+        self.deck_repr = reprs.deck_repr
+        self.scores_repr = reprs.scores_repr
+        self.general_repr = reprs.general_repr
+        self.turn_of_repr = reprs.turn_of_repr
+        self.values_repr = reprs.values_repr
+        self.size += reprs.size
+        self.empty = 0
 
-        grid_input3 = np.flip(np.copy(grid_input1), axis=1)
-        vector_input3 = self.generate_vector_input3(ingenious, should_exchange,
-                                scores, deck).astype(np.bool)
+    def combine_reprs(self, reprs):
+        if self.empty == 1:
+            self.set_reprs_from_reprs(reprs)
+        else:
+            self.board_repr = np.concatenate((reprs.board_repr, self.board_repr))
+            self.deck_repr = np.concatenate((reprs.deck_repr, self.deck_repr))
+            self.scores_repr = np.concatenate((reprs.scores_repr, self.scores_repr))
+            self.general_repr = np.concatenate((reprs.general_repr, self.general_repr))
+            self.turn_of_repr = np.concatenate((reprs.turn_of_repr, self.turn_of_repr))
+            self.values_repr = np.concatenate((reprs.values_repr, self.values_repr))
+            self.size += reprs.size
 
-        grid_input4 = np.flip(np.flip(np.copy(grid_input1), axis=0), axis=1)
-        vector_input4 = self.generate_vector_input4(ingenious, should_exchange,
-                                scores, deck).astype(np.bool)
+    def clip_to_size(self, required_size):
+        self.board_repr = self.board_repr[:required_size]
+        self.deck_repr = self.deck_repr[:required_size]
+        self.scores_repr = self.scores_repr[:required_size]
+        self.general_repr = self.general_repr[:required_size]
+        self.turn_of_repr = self.turn_of_repr[:required_size]
+        self.values_repr = self.values_repr[:required_size]
+        self.size = required_size
 
-        return [
-            (grid_input1, vector_input1, turn_of, move_num),
-            (grid_input2, vector_input2, turn_of, move_num),
-            (grid_input3, vector_input3, turn_of, move_num),
-            (grid_input4, vector_input4, turn_of, move_num)
-            ]
+    def get_examples_by_idxs(self, idxs):
+        x = (self.board_repr[idxs], self.deck_repr[idxs], self.scores_repr[idxs], self.general_repr[idxs])
+        y = self.values_repr[idxs, 0]
+        credit = self.values_repr[idxs, 1]
+        return x, y, credit
 
-    def generate_grid_input(self, board_state, board_occupied, board_available):
-        h, w = board_state.shape
-        board_state = np.expand_dims(board_state, 2)
-        colours = np.arange(7).reshape(1, 1, 7)
-        colours = colours * np.ones((h, w, 7), dtype=np.int32)
+    def augment(self, board_repr, deck_repr, scores_repr, general_repr):
+        if self.version == 1:
+            return self.augment_v1(board_repr, deck_repr, scores_repr, general_repr)
+        elif self.version == 2:
+            return self.augment_v2(board_repr, deck_repr, scores_repr, general_repr)
 
-        grid_input = np.zeros((h, w, 7), dtype=np.int32)
-        grid_input[colours == board_state] = 1
+    # def augment_v1(self, board_repr, deck_repr, scores_repr, general_repr):
+    #     randint1 = np.random.randint(0, high=6)
+    #     randint2 = np.random.randint(0, high=5)
+    #     flip_ordering = self.get_board_flip_ordering(randint1)
 
-        board_occupied = np.expand_dims(board_occupied, 2)
-        board_available = np.expand_dims(board_available, 2)
-        grid_input = np.concatenate([grid_input, board_occupied,
-                                     board_available], 2)
+    #     ordering = np.arange(6)
+    #     ordering = ordering[flip_ordering]
+    #     ordering = np.roll(ordering, randint2)
 
-        return grid_input
+    #     board_ordering = np.concatenate((ordering, np.array((6, 7)))).astype(np.uint8)
+    #     board_repr = board_repr[:, :, :, board_ordering] # b x 11 x 11 x 8
+    #     deck_repr = deck_repr[:, :, ordering] # b x 2 x 6
+    #     scores_repr = scores_repr[:, :, ordering] # b x 2 x 6
 
-    def generate_vector_input1(self, ingenious, should_exchange, scores, deck):
-        vector_input = []
-        vector_input.append(int(ingenious))
-        vector_input.append(int(should_exchange))
+    #     return (board_repr, deck_repr, scores_repr, general_repr)
 
-        score1, score2 = scores
-        score3 = (np.array(score2) - np.array(score1)).tolist()
-        vector_input.extend(score_to_vector(score1).tolist())
-        vector_input.extend(score_to_vector(score2).tolist())
-        vector_input.extend(score_to_vector(score3).tolist())
+    def augment_v1(self, board_repr, deck_repr, scores_repr, general_repr):
+        ordering = np.array((0, 1, 2, 3, 4, 5)).astype(np.uint8)
+        np.random.shuffle(ordering)
+        board_ordering = np.concatenate((ordering, np.array((6, 7)))).astype(np.uint8)
 
-        tile_vectors = []
-        if len(deck) > 0:
-            for tile in deck:
-                tile_vectors.append(colour_to_vector(tile[0]))
-                tile_vectors.append(colour_to_vector(tile[1]))
-        while len(tile_vectors) < 12:
-            tile_vectors.append(np.zeros((6,), dtype=np.int32).tolist())
-        for tile_vector in tile_vectors:
-            vector_input.extend(tile_vector)
+        board_repr = board_repr[:, :, :, board_ordering] # b x 11 x 11 x 8
+        deck_repr = deck_repr[:, :, ordering] # b x 2 x 6
+        scores_repr = scores_repr[:, :, ordering] # b x 2 x 6
 
-        return np.array(vector_input)
+        return (board_repr, deck_repr, scores_repr, general_repr)
 
-    def generate_vector_input2(self, ingenious, should_exchange, scores, deck):
-        vector_input = []
-        vector_input.append(int(ingenious))
-        vector_input.append(int(should_exchange))
+    # def augment_v2(self, board_repr, deck_repr, scores_repr, general_repr):
+    #     n = board_repr.shape[0]
 
-        score1, score2 = scores
-        score1 = np.array(score1)[[2, 3, 0, 1, 4, 5]].tolist()
-        score2 = np.array(score2)[[2, 3, 0, 1, 4, 5]].tolist()
-        score3 = (np.array(score2) - np.array(score1)).tolist()
-        vector_input.extend(score_to_vector(score1).tolist())
-        vector_input.extend(score_to_vector(score2).tolist())
-        vector_input.extend(score_to_vector(score3).tolist())
+    #     for i in range(n):
+    #         randint1 = np.random.randint(0, high=6)
+    #         randint2 = np.random.randint(0, high=5)
+    #         flip_ordering = self.get_board_flip_ordering(randint1)
 
-        colour_to_vector2 = {}
-        for i in range(1, 7):
-            colour_to_vector2[i] = np.zeros((6,), dtype=np.int32)
+    #         ordering = np.arange(6)
+    #         ordering = ordering[flip_ordering]
+    #         ordering = np.roll(ordering, randint2)
+    #         board_ordering = np.concatenate((ordering, np.array((6, 7)))).astype(np.uint8)
 
-        colour_to_vector2[1][2] = 1
-        colour_to_vector2[2][3] = 1
-        colour_to_vector2[3][0] = 1
-        colour_to_vector2[4][1] = 1
-        colour_to_vector2[5][4] = 1
-        colour_to_vector2[6][5] = 1
+    #         board_repr_example = board_repr[i]
+    #         deck_repr_example = deck_repr[i]
+    #         scores_repr_example = scores_repr[i]
 
-        tile_vectors = []
-        if len(deck) > 0:
-            for tile in deck:
-                tile_vectors.append(colour_to_vector2[tile[0]])
-                tile_vectors.append(colour_to_vector2[tile[1]])
-        while len(tile_vectors) < 12:
-            tile_vectors.append(np.zeros((6,), dtype=np.int32).tolist())
-        for tile_vector in tile_vectors:
-            vector_input.extend(tile_vector)
+    #         board_repr_example_augmented = board_repr_example[:, :, board_ordering] # b x 11 x 11 x 8
+    #         deck_repr_example_augmented = deck_repr_example[:, ordering] # b x 2 x 6
+    #         scores_repr_example_augmented = scores_repr_example[:, ordering] # b x 2 x 6
 
-        return np.array(vector_input)
+    #         board_repr[i] = board_repr_example_augmented
+    #         deck_repr[i] = deck_repr_example_augmented
+    #         scores_repr[i] = scores_repr_example_augmented
 
-    def generate_vector_input3(self, ingenious, should_exchange, scores, deck):
-        vector_input = []
-        vector_input.append(int(ingenious))
-        vector_input.append(int(should_exchange))
+    #     return (board_repr, deck_repr, scores_repr, general_repr)
 
-        score1, score2 = scores
-        score1 = np.array(score1)[[3, 2, 1, 0, 5, 4]].tolist()
-        score2 = np.array(score2)[[3, 2, 1, 0, 5, 4]].tolist()
-        score3 = (np.array(score2) - np.array(score1)).tolist()
-        vector_input.extend(score_to_vector(score1).tolist())
-        vector_input.extend(score_to_vector(score2).tolist())
-        vector_input.extend(score_to_vector(score3).tolist())
+    def augment_v2(self, board_repr, deck_repr, scores_repr, general_repr):
+        n = board_repr.shape[0]
 
-        colour_to_vector3 = {}
-        for i in range(1, 7):
-            colour_to_vector3[i] = np.zeros((6,), dtype=np.int32)
+        ordering = np.array((0, 1, 2, 3, 4, 5)).astype(np.uint8)
+        for i in range(n):
+            np.random.shuffle(ordering)
+            board_ordering = np.concatenate((ordering, np.array((6, 7)))).astype(np.uint8)
 
-        colour_to_vector3[1][3] = 1
-        colour_to_vector3[2][2] = 1
-        colour_to_vector3[3][1] = 1
-        colour_to_vector3[4][0] = 1
-        colour_to_vector3[5][5] = 1
-        colour_to_vector3[6][4] = 1
+            board_repr_example = board_repr[i]
+            deck_repr_example = deck_repr[i]
+            scores_repr_example = scores_repr[i]
 
-        tile_vectors = []
-        if len(deck) > 0:
-            for tile in deck:
-                tile_vectors.append(colour_to_vector3[tile[0]])
-                tile_vectors.append(colour_to_vector3[tile[1]])
-        while len(tile_vectors) < 12:
-            tile_vectors.append(np.zeros((6,), dtype=np.int32).tolist())
-        for tile_vector in tile_vectors:
-            vector_input.extend(tile_vector)
+            board_repr_example_augmented = board_repr_example[:, :, board_ordering] # b x 11 x 11 x 8
+            deck_repr_example_augmented = deck_repr_example[:, ordering] # b x 2 x 6
+            scores_repr_example_augmented = scores_repr_example[:, ordering] # b x 2 x 6
 
-        return np.array(vector_input)
+            board_repr[i] = board_repr_example_augmented
+            deck_repr[i] = deck_repr_example_augmented
+            scores_repr[i] = scores_repr_example_augmented
 
-    def generate_vector_input4(self, ingenious, should_exchange, scores, deck):
-        vector_input = []
-        vector_input.append(int(ingenious))
-        vector_input.append(int(should_exchange))
+        return (board_repr, deck_repr, scores_repr, general_repr)
 
-        score1, score2 = scores
-        score1 = np.array(score1)[[1, 0, 3, 2, 5, 4]].tolist()
-        score2 = np.array(score2)[[1, 0, 3, 2, 5, 4]].tolist()
-        score3 = (np.array(score2) - np.array(score1)).tolist()
-        vector_input.extend(score_to_vector(score1).tolist())
-        vector_input.extend(score_to_vector(score2).tolist())
-        vector_input.extend(score_to_vector(score3).tolist())
+    def get_board_flip_ordering(self, randint):
+        board_flip_orderings = np.array((
+            (0, 1, 2, 3, 4, 5),
+            (1, 0, 5, 4, 3, 2),
+            (3, 2, 1, 0, 5, 4),
+            (5, 4, 3, 2, 1, 0),
+            (0, 1, 4, 5, 2, 3),
+            (2, 3, 0, 1, 4, 5),
+            (4, 5, 2, 3, 0, 1)
+        )).astype(np.uint8)
+        return board_flip_orderings[randint]
 
-        colour_to_vector4 = {}
-        for i in range(1, 7):
-            colour_to_vector4[i] = np.zeros((6,), dtype=np.int32)
+    def normalise(self, board_repr, deck_repr, scores_repr, general_repr):
+        board_repr_normalised = board_repr.astype(np.float32)       # b x 11 x 11 x 8
+        deck_repr_normalised = deck_repr.astype(np.float32)         # b x 2 x 6
+        scores_repr_normalised = scores_repr.astype(np.float32)     # b x 2 x 6
+        general_repr_normalised = general_repr.astype(np.float32)   # b x 5
 
-        colour_to_vector4[1][1] = 1
-        colour_to_vector4[2][0] = 1
-        colour_to_vector4[3][3] = 1
-        colour_to_vector4[4][2] = 1
-        colour_to_vector4[5][5] = 1
-        colour_to_vector4[6][4] = 1
+        deck_repr_normalised /= 4.0
+        scores_repr_normalised /= 18.0
+        general_repr_normalised /= np.array(((1, 2, 1, 1, 40))).astype(np.float32)
 
-        tile_vectors = []
-        if len(deck) > 0:
-            for tile in deck:
-                tile_vectors.append(colour_to_vector4[tile[0]])
-                tile_vectors.append(colour_to_vector4[tile[1]])
-        while len(tile_vectors) < 12:
-            tile_vectors.append(np.zeros((6,), dtype=np.int32).tolist())
-        for tile_vector in tile_vectors:
-            vector_input.extend(tile_vector)
+        return (board_repr_normalised, deck_repr_normalised, scores_repr_normalised, general_repr_normalised)
 
-        return np.array(vector_input)
+    def prepare(self, board_repr, deck_repr, scores_repr, general_repr):
+        if self.version == 1:
+            return self.prepare_v1(board_repr, deck_repr, scores_repr, general_repr)
+        elif self.version == 2:
+            return self.prepare_v2(board_repr, deck_repr, scores_repr, general_repr)
+
+    def prepare_v1(self, board_repr, deck_repr, scores_repr, general_repr):
+        b = board_repr.shape[0]
+
+        deck_repr_flat = deck_repr.reshape(b, -1)
+        scores_repr_flat = scores_repr.reshape(b, -1)
+        general_repr_flat = general_repr
+        
+        grid_input = np.transpose(board_repr, (0, 3, 1, 2)) # NHWC -> NCHW
+        vector_input = np.hstack((deck_repr_flat, scores_repr_flat, general_repr_flat))
+
+        return (grid_input, vector_input)
+
+    def prepare_v2(self, board_repr, deck_repr, scores_repr, general_repr):
+        b = board_repr.shape[0]
+
+        deck_repr_flat = deck_repr.reshape(b, -1)
+        scores_repr_flat = scores_repr.reshape(b, -1)
+        general_repr_flat = general_repr
+        vector_input = np.hstack((deck_repr_flat, scores_repr_flat, general_repr_flat))
+        
+        grid_input_offset = self.offset_grid(board_repr)
+        grid_input_offset = np.transpose(grid_input_offset, (0, 3, 1, 2)) # NHWC -> NCHW
+
+        return (grid_input_offset, vector_input)
+
+    def offset_grid(self, board_repr):
+        n, _, _, c = board_repr.shape
+        offset_grid = np.zeros((n, 11, 21, c)).astype(board_repr.dtype) # NHWC
+
+        for i in range(11):
+            for j in range(11):
+                if i % 2 == 0:
+                    if j < 10:
+                        offset_grid[:, i, 2 * j + 1, :] = board_repr[:, j, i, :]
+                else:
+                    offset_grid[:, i, 2 * j, :] = board_repr[:, j, i, :]
+
+        return offset_grid

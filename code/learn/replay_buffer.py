@@ -1,86 +1,52 @@
-import os
-
-import tqdm
-
-import random as rn
+from numba import njit
 import numpy as np
 
+from learn.representation import get_representation
+
 class ReplayBuffer(object):
-    """ Prioritized Experience Replay Buffer """
     def __init__(self, params, work_dir=None):
+        self.temp = float(params["replay_buffer_temp"])
+        self.batch_size = int(params["batch_size"])
         self.buffer_size = int(params["replay_buffer_size"])
-        self.buffer = []
-        self.probs = np.ones((self.buffer_size,), dtype=np.float32) * 0.5
 
-        if work_dir is not None:
-            self.work_dir = os.path.join(work_dir, "buffer")
-            if not os.path.exists(self.work_dir):
-                os.mkdir(self.work_dir)
+        self.buffer = get_representation(params).get_new_reprs_buffer()
+        self.probs = np.ones(self.buffer_size, dtype=np.float32)
 
-    def add(self, new_examples):
-        self.buffer.extend(new_examples)
-        self.probs = np.append(self.probs,
-                        np.ones((len(new_examples),)) * np.mean(self.probs))
-        if len(self.buffer) > self.buffer_size:
-            self.buffer = self.buffer[-self.buffer_size:]
-            self.probs = self.probs[-self.buffer_size:]
-
-    # def sample(self, num_to_sample):
-    #     # Old implementation without prioritisation
-    #     sample = rn.sample(self.buffer, num_to_sample)
-    #     return sample
-
-    def sample(self, num_to_sample):
-        # NOTE: can only sample when replay buffer is full
-        scaled_probs = self.probs / np.sum(self.probs)
-        sampled_idxs = np.random.choice(self.buffer_size, size=num_to_sample,
-                                        replace=False, p=scaled_probs).tolist()
-        return [self.buffer[i] for i in sampled_idxs], sampled_idxs
+    def __len__(self):
+        return self.buffer.size
 
     def is_not_full(self):
-        return self.get_current_size() < self.buffer_size
+        return self.__len__() < self.buffer_size
 
-    def get_current_size(self):
-        return len(self.buffer)
+    def add(self, new_reprs):
+        self.buffer.combine_reprs(new_reprs)
+        self.probs = np.concatenate((
+            np.ones(new_reprs.size, dtype=np.float32) * np.mean(self.probs),
+            self.probs
+        ))
+
+        if self.buffer.size > self.buffer_size:
+            self.buffer.clip_to_size(self.buffer_size)
+            self.probs = self.probs[:self.buffer_size]
 
     def update_probs(self, idxs, diffs):
-        # print(diffs[:10])
-        # print(self.probs[:10])
-        for diff_idx, probs_idx in enumerate(idxs):
-            self.probs[probs_idx] = diffs[diff_idx]
+        self.probs[idxs] = diffs
 
-    def save_buffer_to_file(self):
-        print("Saving buffer to {}".format(self.work_dir))
-        for idx, item in enumerate(self.buffer):
-            x0_name = os.path.join(self.work_dir, "x0_{}.npy".format(idx))
-            x1_name = os.path.join(self.work_dir, "x1_{}.npy".format(idx))
-            y_name = os.path.join(self.work_dir, "y_{}.npy".format(idx))
-            
-            np.save(x0_name, item[0])
-            np.save(x1_name, item[1])
-            np.save(y_name, item[2])
+    def sample_examples(self, num_to_sample):
+        scaled_probs = self.probs ** self.temp
+        probs_norm = (scaled_probs / np.sum(scaled_probs))
+        sampled_idxs = np.random.choice(self.buffer_size, size=num_to_sample, replace=False, p=probs_norm)
+        examples, labels, credit = self.buffer.get_examples_by_idxs(sampled_idxs)
+        return examples, labels, sampled_idxs, credit
 
-        probs_name = os.path.join(self.work_dir, "probs.npy")
-        np.save(probs_name, self.probs)
+    def preprocess(self, inputs, labels):
+        inputs_augmented = self.buffer.augment(*inputs)
+        inputs_normalised = self.buffer.normalise(*inputs_augmented)
+        inputs_prepared = self.buffer.prepare(*inputs_normalised)
+        labels = labels.astype(np.int32)
+        return inputs_prepared, inputs_augmented, labels
 
-    def load_buffer_from_file(self, loading_dir):
-        print("Loading buffer from {}".format(loading_dir))
-        filenames = os.listdir(loading_dir)
-        loading_dict = {}
-        self.buffer = []
-
-        for filename in tqdm.tqdm(filenames):
-            if filename != "probs.npy":
-                type_, num  = filename.replace(".npy", "").split("_")
-                num = int(num)
-
-                if num not in loading_dict:
-                    loading_dict[num] = {}
-                loading_dict[num][type_] = np.load(os.path.join(loading_dir, filename))
-
-        for num in tqdm.tqdm(range(len(loading_dict))):
-            item = loading_dict[num]
-            example = [item["x0"], item["x1"], item["y"]]
-            self.buffer.append(example)
-
-        self.probs = np.load(os.path.join(loading_dir, "probs.npy"))
+    def sample_training_minibatch(self):
+        examples, labels, sampled_idxs, credit = self.sample_examples(self.batch_size)
+        examples, vis_examples, labels = self.preprocess(examples, labels)
+        return examples, labels, vis_examples, sampled_idxs, credit

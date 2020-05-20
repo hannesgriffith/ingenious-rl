@@ -1,2 +1,7 @@
 numpy
 pygame
+numba
+torch
+matplotlib
+tqdm
+pillow

@@ -4,10 +4,8 @@ import pygame as pg
 from pygame.locals import *
 
 from ui.display import Display
-from game.gameplay import get_gameplay
-from game.misc import game_to_display_coords, display_to_game_coords
-from game.misc import display_to_game_move, game_to_display_move, flip_tile
-from game.board import Move
+from game.gameplay import get_gameplay, Move
+from game.tiles import flip_tile
 
 LOGO_PATH = '../imgs/logo.png'
 
@@ -33,8 +31,8 @@ class EventHandler:
                 if event.type == pg.QUIT:
                     self.controller.running = False
             x, y = self.await_click()
-            for ref, hex in self.display.eg_rects.items():
-                if hex.collidepoint(x, y):
+            for ref, hex_ in self.display.eg_rects.items():
+                if hex_.collidepoint(x, y):
                     return self.display.choice_to_col_map[ref]
 
     def request_hex_selection(self):
@@ -43,8 +41,8 @@ class EventHandler:
                 if event.type == pg.QUIT:
                     self.controller.running = False
             x, y = self.await_click()
-            for ref, hex in self.display.hex_rects.items():
-                if hex.collidepoint(x, y):
+            for ref, hex_ in self.display.hex_rects.items():
+                if hex_.collidepoint(x, y):
                     return ref
 
     def confirm(self):
@@ -134,14 +132,13 @@ class Controller:
         self.display_message(message_1="Player {} to move:".format(player))
         self.display.clear_last_move()
         tile = []
-        for hex in move.iterator():
-            x, y = game_to_display_coords(hex)
-            colour = hex[2]
+        for hex_ in move.iterator():
+            x, y, colour = hex_
             tile.append(colour)
             self.display.draw_hex_select_blue_dark((x, y))
             self.display.draw_hex_tile((x, y), colour)
-        move_display = game_to_display_move(move)
-        self.display.set_last_move(move_display)
+        self.display.set_last_move(move)
+        print("5", player, tuple(tile))
         self.display.remove_tile_from_deck(player, tuple(tile))
         pg.display.flip()
         self.display_message(message_1="Player {} has moved".format(player))
@@ -187,16 +184,16 @@ class Controller:
                 line1="Player {} to move:".format(player),
                 line2="Please confirm move")
             if self.event_handler.confirm():
-                move_display = Move(coords1, coords2, colour1, colour2)
-                move_game = display_to_game_move(move_display)
-                tile_display = (move_display.colour1, move_display.colour2)
-                if self.gameplay.board.check_move_is_legal(move_game) and \
+                move = Move(coords1, coords2, colour1, colour2)
+                tile_display = (move.c1, move.c2)
+                if self.gameplay.board.check_move_is_legal(move.to_game_coords()) and \
                         self.display.tile_is_in_deck(player, tile_display):
                     self.display.clear_last_move()
-                    self.display.set_last_move(move_display)
+                    self.display.set_last_move(move)
+                    print("4", player, tuple(tile_display))
                     self.display.remove_tile_from_deck(player, tuple(tile_display))
                     pg.display.flip()
-                    return move_game
+                    return move
                 else:
                     self.display.display_messages(
                         line1="Player {}: move was illegal:".format(player),
@@ -206,7 +203,7 @@ class Controller:
                     pg.display.flip()
                     while not self.event_handler.confirm() and self.running:
                         pass
-                    self.display.clear_move(move_display)
+                    self.display.clear_move(move)
 
             self.display.draw_hex_light(coords1)
             self.display.draw_hex_light(coords2)
@@ -236,6 +233,7 @@ class Controller:
                     message_1="Player {} exchanges".format(action["player"]),
                     message_2="all their tiles.")
                 for tile in self.display.deck[action["player"]]:
+                    print("1", tile, self.display.deck[action["player"]])
                     if tile is not None:
                         self.display.remove_tile_from_deck(action["player"], tile)
                 for _ in range(6):
@@ -246,6 +244,7 @@ class Controller:
                     message_1="Player {} chooses".format(action["player"]),
                     message_2="to exchange tiles")
                 for tile in self.display.deck[action["player"]]:
+                    print("2", tile, self.display.deck[action["player"]])
                     if tile is not None:
                         self.display.remove_tile_from_deck(action["player"], tile)
                 self.display_message(
@@ -258,11 +257,12 @@ class Controller:
                     line1="Player {}:".format(action["player"]),
                     line2="Exchange tiles?")
                 if self.event_handler.confirm():
-                    self.gameplay.players[action["player"]].exchange_tiles()
+                    self.gameplay.players[action["player"]].exchange_tiles(self.gameplay.tiles)
                     self.display_message(
                         message_1="Player {}:".format(action["player"]),
                         message_2="Discarding tiles")
                     for tile in self.display.deck[action["player"]]:
+                        print("3", tile, self.display.deck[action["player"]])
                         if tile is not None:
                             self.display.remove_tile_from_deck(action["player"], tile)
                 else:
@@ -322,7 +322,7 @@ class Controller:
             for event in pg.event.get():
                 if event.type == pg.QUIT:
                     self.running = False
-            self.request = self.gameplay.next(self.response)
+            self.request = self.gameplay.next_(self.response)
             self.loop()
             self.render()
             self.clock.tick(10)
@@ -343,11 +343,11 @@ class Response:
                   "body": tiles}
         self.actions.append(action)
 
-    def add_update_deck(self, player, tiles):
-        action = {"player": player,
-                  "type": "update_deck",
-                  "body": deck}
-        self.actions.append(action)
+    # def add_update_deck(self, player, deck):
+    #     action = {"player": player,
+    #               "type": "update_deck",
+    #               "body": deck}
+    #     self.actions.append(action)
 
     def action_iterator(self):
         for action in self.actions:

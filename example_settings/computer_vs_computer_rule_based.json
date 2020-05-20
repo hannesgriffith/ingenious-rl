@@ -1,15 +1,16 @@
 {
     "1": {
-        "name": "Min",
+        "name": "Mami",
         "player_type": "computer",
         "strategy_type": "increase_min",
         "show_deck": true
     },
     "2": {
-        "name": "Max",
+        "name": "Papi",
         "player_type": "computer",
         "strategy_type": "max",
         "show_deck": true
     },
-    "game_type": "computer"
+    "game_type": "computer",
+    "representation": "v1"
 }

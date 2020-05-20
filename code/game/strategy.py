@@ -1,115 +1,281 @@
-import random as rn
-from copy import deepcopy
-
+from numba import njit, jitclass
 import numpy as np
+import torch
 
-from game.misc import combine_moves_and_deck
-from learn.network_tf1_2 import prepare_example
+from game.board import combine_moves_and_deck
+from learn.network import get_network
 
-def get_strategy(strategy_type):
+def get_strategy(strategy_type, params=None):
     if strategy_type == "random":
         return RandomStrategy()
     elif strategy_type == "max":
         return MaxStrategy()
     elif strategy_type == "increase_min":
         return IncreaseMinStrategy()
-    elif strategy_type == "rl1":
-        return RL1()
+    elif strategy_type == "increase_other_min":
+        return IncreaseOtherMinStrategy()
+    elif strategy_type == "reduce_deficit":
+        return ReduceDeficitStrategy()
+    elif strategy_type == "mixed_1":
+        return MixedStrategy1()
+    elif strategy_type == "mixed_2":
+        return MixedStrategy2()
+    elif strategy_type == "mixed_3":
+        return MixedStrategy3()
+    elif strategy_type == "mixed_4":
+        return MixedStrategy4()
+    elif strategy_type == "rl":
+        return RLVanilla(params=params)
     else:
-        print("Invalid strategy_type")
-        raise
+        raise ValueError("Invalid strategy type chosen.")
 
-def get_other_player(turn_of):
-    other_player = [1, 2]
-    other_player.remove(turn_of)
-    return other_player[0]
+@njit
+def choose_random_move(board, deck):
+    move_combinations = board.get_all_possible_moves()
+    possible_moves = combine_moves_and_deck(move_combinations, deck.get_deck())
+    random_idx = np.random.randint(0, high=possible_moves.shape[0] - 1)
+    return possible_moves[random_idx]
+
+@njit
+def choose_max_scoring_move(board, deck, score):
+    move_combinations = board.get_all_possible_moves()
+    possible_moves = combine_moves_and_deck(move_combinations, deck.get_deck())
+    original_score = np.expand_dims(score.get_score(), 0)
+    move_scores = board.batch_calculate_move_scores(possible_moves)
+    updated_scores, _, _ = score.batch_peek_next_scores(move_scores)
+    scores_diff = updated_scores - original_score
+    total_scores_diff = np.sum(scores_diff, axis=1)
+    max_index = np.argmax(total_scores_diff)
+    return possible_moves[max_index]
+
+@njit
+def choose_increase_min_move(board, deck, score):
+    move_combinations = board.get_all_possible_moves()
+    possible_moves = combine_moves_and_deck(move_combinations, deck.get_deck())
+
+    original_score = score.get_score()
+    min_score = np.min(original_score)
+    min_idxs = np.where(original_score == min_score)[0]
+    num_min_idxs = min_idxs.shape[0]
+
+    moves_scores = board.batch_calculate_move_scores(possible_moves)
+    updated_move_scores, _, _ = score.batch_peek_next_scores(moves_scores)
+    min_scores = updated_move_scores[:, min_idxs].reshape(-1, num_min_idxs)
+    total_min_scores = np.sum(min_scores, axis=1)
+    max_total_min_score = np.max(total_min_scores)
+
+    if max_total_min_score > 0:
+        max_total_min_scores_idxs = np.where(total_min_scores == max_total_min_score)[0]
+
+        if max_total_min_scores_idxs.shape[0] == 1:
+            max_index = max_total_min_scores_idxs[0]
+            return possible_moves[max_index]
+
+        best_moves_so_far = possible_moves[max_total_min_scores_idxs, :]
+        best_moves_updated_scores = updated_move_scores[max_total_min_scores_idxs, :]
+        scores_diff = best_moves_updated_scores - np.expand_dims(original_score, 0)
+        total_scores_diff = np.sum(scores_diff, axis=1)
+        max_index = np.argmax(total_scores_diff)
+        return best_moves_so_far[max_index]
+
+    else:
+        # Where you can't increase your lowest score just choose max
+        return choose_max_scoring_move(board, deck, score)
+
+@njit
+def choose_increase_other_min_move(board, deck, score, other_score):
+    move_combinations = board.get_all_possible_moves()
+    possible_moves = combine_moves_and_deck(move_combinations, deck.get_deck())
+
+    original_score = score.get_score()
+    original_other_score = other_score.get_score()
+    min_score = np.min(original_other_score)
+    min_idxs = np.where(original_other_score == min_score)[0]
+    num_min_idxs = min_idxs.shape[0]
+
+    moves_scores = board.batch_calculate_move_scores(possible_moves)
+    updated_move_scores, _, _ = score.batch_peek_next_scores(moves_scores)
+    min_scores = updated_move_scores[:, min_idxs].reshape(-1, num_min_idxs)
+    total_min_scores = np.sum(min_scores, axis=1)
+    max_total_min_score = np.max(total_min_scores)
+
+    if max_total_min_score > 0:
+        max_total_min_scores_idxs = np.where(total_min_scores == max_total_min_score)[0]
+
+        if max_total_min_scores_idxs.shape[0] == 1:
+            max_index = max_total_min_scores_idxs[0]
+            return possible_moves[max_index]
+
+        best_moves_so_far = possible_moves[max_total_min_scores_idxs, :]
+        best_moves_updated_scores = updated_move_scores[max_total_min_scores_idxs, :]
+        scores_diff = best_moves_updated_scores - np.expand_dims(original_score, 0)
+        total_scores_diff = np.sum(scores_diff, axis=1)
+        max_index = np.argmax(total_scores_diff)
+        return best_moves_so_far[max_index]
+
+    else:
+        # Where you can't increase your lowest score just choose max
+        return choose_increase_min_move(board, deck, score)
+
+@njit
+def choose_reduce_deficit_move(board, deck, score, other_score, margin):
+    move_combinations = board.get_all_possible_moves()
+    possible_moves = combine_moves_and_deck(move_combinations, deck.get_deck())
+    moves_scores = board.batch_calculate_move_scores(possible_moves)
+    updated_move_scores, _, _ = score.batch_peek_next_scores(moves_scores)
+    other_score = np.expand_dims(other_score.get_score(), 0)
+
+    diffs = other_score - updated_move_scores + 36 + margin
+
+    for i in range(diffs.shape[0]):
+        for j in range(diffs.shape[1]):
+            if diffs[i, j] < 36:
+                diffs[i, j] = 36
+
+    diffs -= 36
+    total_diffs = np.sum(diffs, axis=1)
+    min_diff = np.min(total_diffs)
+    min_diff_idxs = np.where(total_diffs == min_diff)[0]
+    num_min_diff_moves = min_diff_idxs.shape[0]
+
+    if num_min_diff_moves == 1:
+        return possible_moves[min_diff_idxs[0]]
+
+    original_score = np.expand_dims(score.get_score(), 0)
+    scores_diff = updated_move_scores - original_score
+    total_scores_diff = np.sum(scores_diff, axis=1)
+
+    min_diff_subset = total_scores_diff[min_diff_idxs]
+    max_min_diff_idx = np.argmax(min_diff_subset)
+
+    return possible_moves[min_diff_idxs][max_min_diff_idx]
+
+@njit
+def choose_mixed_strategy_1_move(board, deck, score, other_score):
+    margin = np.random.randint(0, high=5)
+    return choose_reduce_deficit_move(board, deck, score, other_score, margin)
+
+@njit
+def choose_mixed_strategy_2_move(board, deck, score, other_score):
+    idx = np.random.randint(0, high=5)
+    if idx == 0:
+        return choose_max_scoring_move(board, deck, score)
+    elif idx == 1:
+        return choose_increase_min_move(board, deck, score)
+    elif idx == 2:
+        return choose_increase_other_min_move(board, deck, score, other_score)
+    elif idx == 3:
+        return choose_reduce_deficit_move(board, deck, score, other_score, 5)
+    elif idx == 4:
+        return choose_mixed_strategy_1_move(board, deck, score, other_score)
+    elif idx == 5:
+        return choose_random_move(board, deck)
+
+@njit
+def choose_should_exchange(inference):
+    if inference:
+        return True
+    else:
+        return np.random.randint(0, high=1) == 1
 
 class RandomStrategy:
     def __init__(self):
         pass
 
-    def choose_move(self, board, deck, score, players, player_num, repr_fn):
-        move_combinations = board.get_all_possible_moves()
-        possible_moves = combine_moves_and_deck(move_combinations, deck)
-        random_idx = rn.randint(0, len(possible_moves) - 1)
-        should_exchange = rn.choice([True, False])
-        return (possible_moves[random_idx], should_exchange), 0
+    def choose_move(self, board, deck, score, other_score, turn_of, repr_fn, inference=False):
+        move = choose_random_move(board, deck)
+        should_exchange = choose_should_exchange(inference)
+        return (move, should_exchange), 0.5
 
 class MaxStrategy:
     def __init__(self):
         pass
 
-    def choose_move(self, board, deck, score, players, player_num, repr_fn):
-        move_combinations = board.get_all_possible_moves()
-        possible_moves = combine_moves_and_deck(move_combinations, deck)
-        move_scores = [0] * len(possible_moves)
-        for idx, move in enumerate(possible_moves):
-            move_score = np.array(board.calculate_move_score(move))
-            original_score = np.array(score.get_score())
-            score_increase = original_score + move_score
-            score_increase[score_increase > 18] = 18
-            score_increase -= original_score
-            move_scores[idx] = np.sum(score_increase)
-        max_score = max(move_scores)
-        max_index = move_scores.index(max_score)
-        return (possible_moves[max_index], True), 0
+    def choose_move(self, board, deck, score, other_score, turn_of, repr_fn, inference=False):
+        move = choose_max_scoring_move(board, deck, score)
+        should_exchange = choose_should_exchange(inference)
+        return (move, should_exchange), 0.5
 
 class IncreaseMinStrategy:
     def __init__(self):
         pass
 
-    def choose_move(self, board, deck, score, players, player_num, repr_fn):
-        should_exchange = True # always exchange when you don't have any of your lowest
-        move_combinations = board.get_all_possible_moves()
-        possible_moves = combine_moves_and_deck(move_combinations, deck)
-        min_score = score.min_score()
-        min_scores_idxs = [c for c, s in enumerate(score.get_score()) if s == min_score]
+    def choose_move(self, board, deck, score, other_score, turn_of, repr_fn, inference=False):
+        move = choose_increase_min_move(board, deck, score)
+        should_exchange = choose_should_exchange(inference)
+        return (move, should_exchange), 0.5
 
-        best_moves = []
-        best_score = -1
-        for move in possible_moves:
-            move_score = board.calculate_move_score(move)
-            min_score = np.sum(np.array([move_score[i] for i in min_scores_idxs]))
-            if min_score == best_score:
-                best_moves.append((move, move_score))
-            elif min_score > best_score:
-                best_moves = [(move, move_score)]
-                best_score = min_score
-
-        if len(best_moves):
-            if len(best_moves) == 1:
-                return (best_moves[0][0], should_exchange), 0
-            else:
-                very_best_move_score = -1
-                very_best_move = best_moves[0][0]
-                for best_move, best_move_score in best_moves:
-                    total_score = np.sum(np.array(best_move_score))
-                    if total_score > very_best_move_score:
-                        very_best_move = best_move
-                        very_best_move_score = total_score
-                return (very_best_move, should_exchange), 0
-
-        else:
-            # Deal with case where you can't increase your lowest score
-            # In this case just go for max score
-            move_scores = [0] * len(possible_moves)
-            for idx, move in enumerate(possible_moves):
-                move_score = np.array(board.calculate_move_score(move))
-                original_score = np.array(score.get_score())
-                score_increase = original_score + move_score
-                score_increase[score_increase > 18] = 18
-                score_increase -= original_score
-                move_scores[idx] = np.sum(score_increase)
-            max_score = max(move_scores)
-            max_index = move_scores.index(max_score)
-            return (possible_moves[max_index], True), 0
-
-class RL1:
+class IncreaseOtherMinStrategy:
     def __init__(self):
+        pass
+
+    def choose_move(self, board, deck, score, other_score, turn_of, repr_fn, inference=False):
+        move = choose_increase_other_min_move(board, deck, score, other_score)
+        should_exchange = choose_should_exchange(inference)
+        return (move, should_exchange), 0.5
+
+class ReduceDeficitStrategy:
+    def __init__(self):
+        self.margin = 5
+
+    def choose_move(self, board, deck, score, other_score, turn_of, repr_fn, inference=False):
+        move = choose_reduce_deficit_move(board, deck, score, other_score, self.margin)
+        should_exchange = choose_should_exchange(inference)
+        return (move, should_exchange), 0.5
+
+class MixedStrategy1:
+    def __init__(self):
+        pass
+
+    def choose_move(self, board, deck, score, other_score, turn_of, repr_fn, inference=False):
+        move = choose_mixed_strategy_1_move(board, deck, score, other_score)
+        should_exchange = choose_should_exchange(inference)
+        return (move, should_exchange), 0.5
+
+class MixedStrategy2:
+    def __init__(self):
+        pass
+
+    def choose_move(self, board, deck, score, other_score, turn_of, repr_fn, inference=False):
+        move = choose_mixed_strategy_2_move(board, deck, score, other_score)
+        should_exchange = choose_should_exchange(inference)
+        return (move, should_exchange), 0.5
+
+class MixedStrategy3:
+    def __init__(self):
+        self.margin = 15
+
+    def choose_move(self, board, deck, score, other_score, turn_of, repr_fn, inference=False):
+        move = choose_reduce_deficit_move(board, deck, score, other_score, self.margin)
+        self.margin = np.max(self.margin - 1, 0)
+        should_exchange = choose_should_exchange(inference)
+        return (move, should_exchange), 0.5
+
+class MixedStrategy4:
+    def __init__(self):
+        self.margin = 5
+        self.count = 4
+
+    def choose_move(self, board, deck, score, other_score, turn_of, repr_fn, inference=False):
+        move = choose_reduce_deficit_move(board, deck, score, other_score, self.margin)
+        if self.count == 0:
+            self.margin = np.max(self.margin - 1, 0)
+            self.count = 4
+        else:
+            self.count -= 1
+        should_exchange = choose_should_exchange(inference)
+        return (move, should_exchange), 0.5
+
+class RLVanilla:
+    def __init__(self, params=None):
         self.explore = False
         self.eps = 0.0
-        self.temp = 0.0
+        self.temp = None
         self.model = None
+        self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        if params is not None and "ckpt_path" in params:
+            self.model = get_network(params).to(self.device)
+            self.model.load_state_dict(torch.load(params["ckpt_path"]))
 
     def set_explore(self, explore):
         self.explore = explore
@@ -121,72 +287,53 @@ class RL1:
     def set_model(self, model):
         self.model = model
 
-    def choose_move(self, board, deck, score, players, player_num, repr_fn):
+    def run_model(self, inputs):
+        self.model = self.model.eval()
+        with torch.no_grad():
+            grid_inputs = torch.from_numpy(inputs[0]).to(self.device)
+            vector_inputs = torch.from_numpy(inputs[1]).to(self.device)
+            move_values = self.model(grid_inputs, vector_inputs)
+            move_values = torch.squeeze(move_values).detach().cpu().numpy()
+            move_values = move_values.astype(np.float32)
+        return move_values
+
+    def prepare_model_inputs(self, r):
+        inputs = (r.board_repr, r.deck_repr, r.scores_repr, r.general_repr)
+        inputs = r.augment(*inputs)
+        inputs = r.normalise(*inputs)
+        inputs = r.prepare(*inputs)
+        return inputs
+
+    def choose_move(self, board, deck, score, other_score, turn_of, repr_fn, inference=False):
         move_combinations = board.get_all_possible_moves()
-        possible_moves = combine_moves_and_deck(move_combinations, deck)
-        all_moves = []
-        test_inputs = []
+        possible_moves = combine_moves_and_deck(move_combinations, deck.get_deck())
+        representations, possible_moves_subset = repr_fn(board, deck, score, other_score, turn_of, possible_moves)
 
-        for move in possible_moves:
-            next_board_state = board.peak_board_update(move)
-            nextState, _, _ = next_board_state
-            next_move_score = board.peak_move_score(nextState, move)
-            next_score, ingenious = players[player_num].score.peak_next_score(next_move_score)
-            tile_to_play = (move.colour1, move.colour2)
-            deck_next = players[player_num].deck.peak_next_deck(tile_to_play)
-            other_player = get_other_player(player_num)
-            score_other = players[other_player].score.get_score_copy()
-            scores = (next_score, score_other)
-            can_exchange = players[player_num].peak_can_exchange_tiles(deck_next, next_score)
+        model_inputs = self.prepare_model_inputs(representations)
+        move_values = self.run_model(model_inputs)
+        # print(move_values)
 
-            network_input = repr_fn(next_board_state,
-                                    scores,
-                                    deck_next,
-                                    player_num,
-                                    ingenious,
-                                    False,
-                                    board.move_num)[0]
-
-            test_input = (network_input[0], network_input[1])
-            test_inputs.append(test_input)
-            all_moves.append((move, False))
-
-            if can_exchange:
-                network_input = repr_fn(next_board_state,
-                                        scores,
-                                        deck_next,
-                                        player_num,
-                                        ingenious,
-                                        True,
-                                        board.move_num)[0]
-
-                test_input = (network_input[0], network_input[1])
-                test_inputs.append(test_input)
-                all_moves.append((move, True))
-
-        x_np, _ = prepare_example(test_inputs, training=False)
-        move_values = self.model(x_np)
-        move_values = np.squeeze(move_values)
-
-        if not self.explore:
-            best_value = np.max(move_values)
-            # print("Computer move value:", round(best_value, 2))
-            best_move_idx = np.argmax(move_values)
-            return all_moves[best_move_idx], best_value
-
-        num_moves = len(all_moves)
-        random_val = rn.uniform(0, 1)
-        if random_val <= self.eps:
-            random_idx = rn.randrange(num_moves)
-            return all_moves[random_idx], move_values[random_idx]
-
-        if self.temp is None:
-            best_value = np.max(move_values)
-            best_move_idx = np.argmax(move_values)
-            return all_moves[best_move_idx], best_value
+        if not self.explore or inference:
+            move_idx = np.argmax(move_values)
         else:
-            move_values = np.array(move_values).astype(np.float32)
-            scaled = move_values ** self.temp
-            probs = scaled / np.sum(scaled)
-            sampled_idx = np.random.choice(num_moves, p=probs)
-            return all_moves[sampled_idx], move_values[sampled_idx]
+            rand_val = np.random.uniform()
+            if rand_val <= self.eps:
+                num_moves = possible_moves_subset.shape[0]
+                move_idx = np.random.randint(0, high=num_moves - 1)
+            else:
+                if self.temp is None:
+                    move_idx = np.argmax(move_values)
+                else:
+                    num_moves = possible_moves_subset.shape[0]
+                    scaled = move_values ** self.temp
+                    probs = scaled / np.sum(scaled)
+                    move_idx = np.random.choice(num_moves, p=probs)
+
+        return get_return_values(possible_moves_subset, representations, move_values, move_idx)
+
+@njit
+def get_return_values(possible_moves_subset, representations, move_values, move_idx):
+    best_move = possible_moves_subset[move_idx]
+    should_exchange = representations.general_repr[move_idx, 3]
+    best_move_value = move_values[move_idx]
+    return (best_move, should_exchange), best_move_value

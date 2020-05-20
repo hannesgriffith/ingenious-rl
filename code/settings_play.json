@@ -6,13 +6,14 @@
         "show_deck": true
     },
     "2": {
-        "name": "Ingenious AI",
+        "name": "Computer",
         "player_type": "computer",
-        "strategy_type": "rl1",
-        "network_type": "network1",
-        "ckpt_path": "finished_ckpts/best_weights.ckpt",
+        "strategy_type": "rl",
+        "network_type": "mlp2_only",
+        "ckpt_path": "logs/mlp2_only_2020-05-02_22-52/best.pth",
         "show_deck": false
     },
     "game_type": "computer",
-    "representation": "features_1_one_hot"
+    "representation": "v1",
+    "value_type": "v1"
 }

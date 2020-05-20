@@ -1,4 +1,3 @@
-from numba import njit
 import numpy as np
 
 from game.board import Board
@@ -6,7 +5,7 @@ from game.tiles import Tiles
 from game.player import get_player, Deck, Score
 from learn.representation import get_representation
 from learn.value import get_value_type
-from learn.network import get_network
+from learn.network_tf1_2 import get_network
 
 # option to replace tiles in deck
 # class to set up configuration, rather than get functions
@@ -20,7 +19,7 @@ def get_gameplay(params):
     elif params["game_type"] == "training":
         return TrainingGameplay(params)
     else:
-        raise ValueError("Invalid gameplay type chosen.")
+        assert False
 
 def get_strategy_types(params):
     strategy_type_1 = None
@@ -49,23 +48,47 @@ class RealGameplay:
         self.tiles = Tiles()
 
         strat_1, strat_2 = get_strategy_types(self.params)
-        self.players[1] = get_player(self.params[1]["player_type"], self.board, strat_1, params=self.params[1])
-        self.players[2] = get_player(self.params[2]["player_type"], self.board, strat_2, params=self.params[2])
+        self.players[1] = get_player(self.params[1]["player_type"], 1,
+                                     self.params[1]["name"], self.board,
+                                     self.tiles, strat_1)
+        self.players[2] = get_player(self.params[2]["player_type"],2,
+                                     self.params[2]["name"], self.board,
+                                     self.tiles, strat_2)
 
-        self.turn_of = get_other_player(player_to_start)
-        self.other = get_other_player(self.turn_of)
+        self.turn_of = self.get_other_player(player_to_start)
+        self.other = self.get_other_player(self.turn_of)
         if self.params["representation"]:
             self.representation = get_representation(self.params)
 
+        for i in [1, 2]:
+            if self.params[i]["strategy_type"] == "rl1":
+                self.players[i].strategy.set_model(get_network(self.params[i]))
+                self.players[i].strategy.model.load_weights(self.params[i]["ckpt_path"])
+
+    def get_other_player(self, player):
+        if player == 1:
+            return 2
+        else:
+            return 1
+
     def switch_player(self):
-        tmp = self.other
         self.other = self.turn_of
-        self.turn_of = tmp
+        self.turn_of = self.get_other_player(self.turn_of)
 
     def find_winner(self):
-        p1_score = self.players[1].get_score()
-        p2_score = self.players[2].get_score()
-        return find_winner_fast(p1_score, p2_score)
+        player_1_score = self.players[1].get_score()
+        player_2_score = self.players[2].get_score()
+        player_1_score_sorted = np.sort(player_1_score)
+        player_2_score_sorted = np.sort(player_2_score)
+        scores_diff = player_1_score_sorted - player_2_score_sorted
+        idxs_where_different = np.where(scores_diff != 0)[0]
+        if idxs_where_different.shape == 0:
+            return 0
+        i = np.min(idxs_where_different)
+        if player_1_score[i] > player_2_score[i]:
+            return 1
+        else:
+            return 2
 
     def get_initial_request(self):
         initial_request = Request()
@@ -76,6 +99,9 @@ class RealGameplay:
         for i in [1, 2]:
             if self.players[i].player_type == "computer":
                 initial_request.add_request_pickup_tiles(i, 6)
+        # initial_request.add_display_message(None,
+        #     "Player {} starts".format(
+        #         self.get_other_player(self.turn_of)))
         return initial_request
 
     def next_(self, response):
@@ -90,6 +116,7 @@ class RealGameplay:
             elif item["type"] == "tiles_picked_up":
                 tiles_picked_up = item["body"]
                 self.players[item["player"]].update_deck(display_to_game_tiles(tiles_picked_up))
+            else:
                 raise ValueError('Unrecognised response item.')
 
         if self.board.game_is_finished():
@@ -112,10 +139,9 @@ class RealGameplay:
             move_output = self.players[self.turn_of].make_move(
                         self.players,
                         self.turn_of,
-                        self.representation.generate_batched,
-                        inference=True
+                        self.representation.generate
             )
-            self.ingenious, chosen_move, score, should_exchange, _ = move_output
+            self.ingenious, chosen_move, score, should_exchange = move_output
             request.add_make_move(self.turn_of, chosen_move)
             self.num_to_pickup += 1
             request.add_update_score(self.turn_of, score)
@@ -144,25 +170,46 @@ class ComputerGameplay:
         self.tiles = Tiles()
 
         strat_1, strat_2 = get_strategy_types(self.params)
-        self.players[1] = get_player(self.params[1]["player_type"], self.board, strat_1, params=self.params[1])
-        self.players[2] = get_player(self.params[2]["player_type"], self.board, strat_2, params=self.params[2])
+        self.players[1] = get_player(self.params[1]["player_type"], 1, self.params[1]["name"], self.board, self.tiles, strat_1)
+        self.players[2] = get_player(self.params[2]["player_type"],2, self.params[2]["name"], self.board, self.tiles, strat_2)
 
         self.turn_of = np.random.choice([1, 2])
-        self.other = get_other_player(self.turn_of)
-        self.players[self.other].pick_up(self.tiles)
-        self.players[self.turn_of].pick_up(self.tiles)
+        self.other = self.get_other_player(self.turn_of)
+        self.players[self.other].pick_up()
+        self.players[self.turn_of].pick_up()
         if self.params["representation"]:
             self.representation = get_representation(self.params)
 
+        for i in [1, 2]:
+            if self.params[i]["strategy_type"] == "rl1":
+                self.players[i].strategy.set_model(get_network(self.params[i]))
+                self.players[i].strategy.model.load_weights(self.params[i]["ckpt_path"])
+
+    def get_other_player(self, player):
+        if player == 1:
+            return 2
+        else:
+            return 1
+
     def switch_player(self):
-        tmp = self.other
         self.other = self.turn_of
-        self.turn_of = tmp
+        self.turn_of = self.get_other_player(self.turn_of)
 
     def find_winner(self):
-        p1_score = self.players[1].get_score()
-        p2_score = self.players[2].get_score()
-        return find_winner_fast(p1_score, p2_score)
+        player_1_score = self.players[1].get_score().flatten()
+        player_2_score = self.players[2].get_score().flatten()
+        player_1_score_sorted = np.sort(player_1_score)
+        player_2_score_sorted = np.sort(player_2_score)
+        scores_diff = player_1_score_sorted - player_2_score_sorted
+        idxs_where_different = np.where(scores_diff != 0)[0]
+        i = np.min(idxs_where_different)
+        # print(f"score 1: {player_1_score}, score 2: {player_2_score}, 1 sorted: {player_1_score_sorted}, 2 sorted {player_2_score_sorted}, diff: {scores_diff}, idxs: {idxs_where_different}, min idx: {i}, min 1: {}, min 2: {}")
+        if idxs_where_different.shape == 0:
+            return 0
+        elif player_1_score_sorted[i] > player_2_score_sorted[i]:
+            return 1
+        else:
+            return 2
 
     def get_initial_request(self):
         initial_request = Request()
@@ -191,7 +238,7 @@ class ComputerGameplay:
                     if self.players[item["player"]].can_exchange_tiles():
                         request.possible_exchange(item["player"])
                     else:
-                        self.players[item["player"]].pick_up(self.tiles)
+                        self.players[item["player"]].pick_up()
                         request.add_update_deck(item["player"])
             else:
                 raise ValueError('Unrecognised response item.')
@@ -216,45 +263,21 @@ class ComputerGameplay:
             move_output = self.players[self.turn_of].make_move(
                         self.players,
                         self.turn_of,
-                        self.representation.generate_batched,
-                        inference=True
+                        self.representation.generate
             )
-            self.ingenious, chosen_move, score, should_exchange, _ = move_output
+            self.ingenious, chosen_move, score, should_exchange = move_output
             request.add_make_move(self.turn_of, chosen_move)
             request.add_update_score(self.turn_of, score)
             if not self.ingenious:
                 if should_exchange and self.players[self.turn_of].can_exchange_tiles():
-                    self.players[self.turn_of].exchange_tiles(self.tiles)
+                    self.players[self.turn_of].exchange_tiles()
                     request.add_computer_exchange_tiles(self.turn_of)
                 else:
-                    self.players[self.turn_of].pick_up(self.tiles)
+                    self.players[self.turn_of].pick_up()
                     request.add_update_deck(self.turn_of)
 
         self.number_moves += 1
         return request
-
-@njit
-def get_other_player(player):
-    if player == 1:
-        return 2
-    else:
-        return 1
-
-@njit
-def find_winner_fast(p1_score, p2_score):
-    p1_score.sort()
-    p2_score.sort()
-
-    for i in range(6):
-        p1_colour_score = p1_score[i]
-        p2_colour_score = p2_score[i]
-
-        if p1_colour_score > p2_colour_score:
-            return 1
-        if p2_colour_score > p1_colour_score:
-            return 2
-
-    return 0
 
 class TrainingGameplay:
     def __init__(self, params):
@@ -284,27 +307,45 @@ class TrainingGameplay:
         self.representation = get_representation(self.params)
         self.move_value = get_value_type(self.params)
         self.turn_of = np.random.choice([1, 2])
-        self.other = get_other_player(self.turn_of)
-        self.players[self.turn_of].pick_up(self.tiles)
-        self.players[self.other].pick_up(self.tiles)
+        self.other = self.get_other_player(self.turn_of)
+        self.players[self.turn_of].pick_up()
+        self.players[self.other].pick_up()
+        self.move_number = 0
+
+    def get_other_player(self, player):
+        if player == 1:
+            return 2
+        else:
+            return 1
 
     def switch_player(self):
-        tmp = self.other
+        buffer = self.other
         self.other = self.turn_of
-        self.turn_of = tmp
+        self.turn_of = buffer
 
     def find_winner(self):
-        p1_score = self.players[1].get_score()
-        p2_score = self.players[2].get_score()
-        return find_winner_fast(p1_score, p2_score)
+        player_1_score = self.players[1].get_score()
+        player_2_score = self.players[2].get_score()
+        player_1_score_sorted = np.sort(player_1_score)
+        player_2_score_sorted = np.sort(player_2_score)
+        scores_diff = player_1_score_sorted - player_2_score_sorted
+        idxs_where_different = np.where(scores_diff != 0)[0]
+        if idxs_where_different.shape == 0:
+            return 0
+        i = np.min(idxs_where_different)
+        if player_1_score[i] > player_2_score[i]:
+            return 1
+        else:
+            return 2
 
     def next_(self, generate_representation=True):
         if not self.ingenious:
-            if self.should_exchange[self.turn_of] and self.players[self.turn_of].can_exchange_tiles():
-                self.players[self.turn_of].exchange_tiles(self.tiles)
-                self.players[self.turn_of].exchange_tiles(self.tiles)
+            if self.should_exchange[self.turn_of] and \
+                    self.players[self.turn_of].can_exchange_tiles():
+                self.players[self.turn_of].exchange_tiles()
+                self.players[self.turn_of].exchange_tiles()
             else:
-                self.players[self.turn_of].pick_up(self.tiles)
+                self.players[self.turn_of].pick_up()
 
         if self.ingenious:
             self.ingenious = False
@@ -314,26 +355,24 @@ class TrainingGameplay:
         move_output = self.players[self.turn_of].make_move(
             self.players,
             self.turn_of,
-            self.representation.generate_batched,
-            inference=False
+            self.representation.generate
         )
-
-        ingenious, _, _, should_exchange, num_ingenious = move_output
-        self.ingenious = ingenious
+        self.ingenious, chosen_move, score, should_exchange = move_output
         self.should_exchange[self.turn_of] = should_exchange
 
         if generate_representation:
+            next_board_state = (self.board.state, self.board.occupied, self.board.available)
+            scores = (self.players[self.turn_of].get_score(), self.players[self.other].get_score())
+            current_deck = self.players[self.turn_of].deck.get_deck_copy()
             move_representations = self.representation.generate(
-                self.board,
-                self.players[self.turn_of].deck,
-                self.players[self.turn_of].score,
-                self.players[get_other_player(self.turn_of)].score,
-                ingenious,
-                num_ingenious,
-                self.players[self.turn_of].can_exchange_tiles(),
-                should_exchange,
-                np.array([self.turn_of], dtype=np.uint8)
-                )
+                                                            next_board_state,
+                                                            scores,
+                                                            current_deck,
+                                                            self.turn_of,
+                                                            self.ingenious,
+                                                            should_exchange,
+                                                            self.move_number
+                                                            )
         else:
             move_representations = None
 
@@ -342,21 +381,25 @@ class TrainingGameplay:
         else:
             winner = None
 
+        # print("Move number {}".format(self.move_number))
+        self.move_number += 1
         return move_representations, winner
 
     def generate_episode(self, p1, p2):
         while True:
             self.initialise_game(p1, p2)
+            moves = []
             winner = None
-            representations = self.representation.get_new_reprs_buffer()
+            i = 0
             while winner is None:
-                move_representations, winner = self.next_(generate_representation=True)
-                representations.combine_reprs(move_representations)
-                del move_representations
+                i += 1
+                # print("move", i)
+                move_representations, winner = self.next_()
+                moves.extend(move_representations)
 
             if winner != 0:
-                updated_representations = self.move_value.add_values_for_episode(representations, winner)
-                return winner, updated_representations
+                updated_moves = self.move_value.add_values_for_episode(moves, winner)
+                return winner, updated_moves
 
     def play_test_game(self, p1, p2):
         while True:
@@ -364,7 +407,7 @@ class TrainingGameplay:
             winner = None
             while winner is None:
                 _, winner = self.next_(generate_representation=False)
-            if winner != 0:
+            if winner !=0:
                 return winner
 
 class Request:

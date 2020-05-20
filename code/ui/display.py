@@ -7,7 +7,7 @@ from pygame.locals import *
 
 from ui.coords import UICoords
 from utils.loader import ImageLoader
-from game.misc import col_to_num, num_to_col, flip_tile, game_to_display_coords
+from game.tiles import flip_tile
 
 # background_colour = [100, 200, 100]
 background_colour = [240, 200, 240]
@@ -180,6 +180,7 @@ class Display:
         self.screen.blit(self.images.dark_hex, self.eg_map[1])
 
     def add_tile_to_deck(self, deck_num, tile):
+        print(deck_num, tile, self.deck)
         deck_idx = self.deck[deck_num].index(None)
         self.deck[deck_num][deck_idx] = tile
         if self.show_decks[deck_num]:
@@ -190,8 +191,9 @@ class Display:
             pg.display.flip()
 
     def remove_tile_from_deck(self, deck_num, tile):
+        print(deck_num, tile, self.deck)
         if self.game_type == "real" and self.player_type[deck_num] == "human":
-            return None # Hack for when we don't know real player's deck
+            return None # When we don't know real player's deck
 
         if tile in self.deck[deck_num]:
             deck_idx = self.deck[deck_num].index(tile)
@@ -206,7 +208,7 @@ class Display:
             pg.display.flip()
 
     def tile_is_in_deck(self, deck_num, tile):
-        if self.game_type == "real": # Hack as we don't know real player's deck
+        if self.game_type == "real": # We don't know real player's deck
             return True
         if tile in self.deck[deck_num] or flip_tile(tile) in self.deck[deck_num]:
             return True
