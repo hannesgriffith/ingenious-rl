@@ -1,6 +1,6 @@
 numpy
 pygame
-numba
+numba==0.48.0
 torch
 matplotlib
 tqdm
