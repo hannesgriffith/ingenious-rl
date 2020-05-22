@@ -325,7 +325,8 @@ class TrainingGameplay:
                 self.num_ingenious,
                 self.players[self.turn_of].can_exchange_tiles(),
                 False,
-                np.array([1], dtype=np.uint8)
+                1,
+                0
                 )
             before_move_representation_other = self.representation.generate(
                 self.board,
@@ -336,7 +337,8 @@ class TrainingGameplay:
                 self.num_ingenious,
                 self.players[get_other_player(self.turn_of)].can_exchange_tiles(),
                 False,
-                np.array([0], dtype=np.uint8)
+                0,
+                1
                 )
         else:
             before_move_representation_self = None
@@ -366,7 +368,8 @@ class TrainingGameplay:
                 num_ingenious,
                 self.players[self.turn_of].can_exchange_tiles(),
                 should_exchange,
-                np.array([identifier_1], dtype=np.uint8)
+                identifier_1,
+                identifier_2
                 )
             after_move_representation_other = self.representation.generate(
                 self.board,
@@ -377,7 +380,8 @@ class TrainingGameplay:
                 num_ingenious,
                 self.players[get_other_player(self.turn_of)].can_exchange_tiles(),
                 False,
-                np.array([identifier_2], dtype=np.uint8)
+                identifier_2,
+                identifier_1
                 )
         else:
             after_move_representation_self = None

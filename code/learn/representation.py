@@ -1,4 +1,4 @@
-from numba import jitclass, uint8, int32, float32
+from numba import jitclass, uint8, int32, float32, njit
 import numpy as np
 
 from game.player import batch_peek_can_exchange_tiles
@@ -26,7 +26,7 @@ class RepresentationGenerator:
     def __init__(self):
         self.version = 1
 
-    def generate(self, board, deck, score, other_score, ingenious, num_ingenious, can_exchange, should_exchange, your_turn):
+    def generate(self, board, deck, score, other_score, ingenious, num_ingenious, can_exchange, should_exchange, your_turn, other_turn):
         board_repr = board.get_state_copy() # 11 x 11 x 8 (i x j x [6 colours, occupied, available])
         deck_repr = deck.get_state_copy() # 2 x 6 ([single tiles, double tiles] x [6 colours])
 
@@ -42,7 +42,7 @@ class RepresentationGenerator:
             should_exchange * can_exchange, # always 0 if can't exchange
             board.move_num,
             your_turn,
-            get_other(your_turn)), dtype=np.uint8) # (7,)
+            other_turn), dtype=np.uint8) # (7,)
 
         values_repr = np.ones(2, dtype=np.float32) * 255
 
