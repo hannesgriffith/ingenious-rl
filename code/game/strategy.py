@@ -306,7 +306,7 @@ class RLVanilla:
     def choose_move(self, board, deck, score, other_score, turn_of, repr_fn, inference=False):
         move_combinations = board.get_all_possible_moves()
         possible_moves = combine_moves_and_deck(move_combinations, deck.get_deck())
-        representations, possible_moves_subset = repr_fn(board, deck, score, other_score, 0, possible_moves)
+        representations, possible_moves_subset = repr_fn(board, deck, score, other_score, possible_moves)
 
         model_inputs = self.prepare_model_inputs(representations)
         move_values = self.run_model(model_inputs)

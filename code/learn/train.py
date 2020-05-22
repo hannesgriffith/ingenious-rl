@@ -40,9 +40,9 @@ class Params(object):
         with open(output_path, 'w') as f:
             json.dump(self.__dict__, f)
 
-# class SupervisedTrainingSession:
-#     def __init__(self, args, config):
-#         self.config = config
+class SupervisedTrainingSession:
+    def __init__(self, args, config):
+        self.config = config
 #         self.p = Params(self.config)
 #         self.game = get_gameplay(self.config)
 #         self.repr = get_representation(self.config)

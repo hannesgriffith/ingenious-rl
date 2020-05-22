@@ -315,7 +315,7 @@ class TrainingGameplay:
             was_ingenious = False
             self.num_ingenious = 0
 
-        if generate_representation: # turn of 0 yourself, 1 other player
+        if generate_representation: # turn of: 1 your turn, 0 not your turn
             before_move_representation_self = self.representation.generate(
                 self.board,
                 self.players[self.turn_of].deck,
@@ -325,7 +325,7 @@ class TrainingGameplay:
                 self.num_ingenious,
                 self.players[self.turn_of].can_exchange_tiles(),
                 False,
-                np.array([0], dtype=np.uint8)
+                np.array([1], dtype=np.uint8)
                 )
             before_move_representation_other = self.representation.generate(
                 self.board,
@@ -336,7 +336,7 @@ class TrainingGameplay:
                 self.num_ingenious,
                 self.players[get_other_player(self.turn_of)].can_exchange_tiles(),
                 False,
-                np.array([1], dtype=np.uint8)
+                np.array([0], dtype=np.uint8)
                 )
         else:
             before_move_representation_self = None
@@ -355,8 +355,8 @@ class TrainingGameplay:
         self.should_exchange[self.turn_of] = should_exchange
 
         if generate_representation: # turn of 0 yourself, 1 other player
-            identifier_1 = 0 if is_ingenious else 1
-            identifier_2 = 1 if is_ingenious else 0
+            identifier_1 = 1 if is_ingenious else 0
+            identifier_2 = 0 if is_ingenious else 1
             after_move_representation_self = self.representation.generate(
                 self.board,
                 self.players[self.turn_of].deck,
