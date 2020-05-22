@@ -5,3 +5,4 @@ torch
 matplotlib
 tqdm
 pillow
+tensorboard

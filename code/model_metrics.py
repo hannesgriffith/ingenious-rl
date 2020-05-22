@@ -18,7 +18,7 @@ def play_game(gameplay, params_1, params_2):
     board, tiles = Board(), Tiles()
     player_1 = get_player(params_1["player_type"], board, params_1["strategy_type"], params=params_1)
     player_2 = get_player(params_2["player_type"], board, params_2["strategy_type"], params=params_2)
-    winner = gameplay.play_test_game(player_1, player_2)
+    winner, _ = gameplay.play_test_game(player_1, player_2)
     return winner
 
 def main():

@@ -18,7 +18,7 @@ exploration_spec_1 = [
 class ExplorationV1:
     def __init__(self):
         self.eps = 0.0
-        self.temp = 1.0
+        self.temp = 3.0
 
     def get_params(self, step):
         return self.eps, self.temp

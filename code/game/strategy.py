@@ -297,17 +297,16 @@ class RLVanilla:
             move_values = move_values.astype(np.float32)
         return move_values
 
-    def prepare_model_inputs(self, r):
-        inputs = (r.board_repr, r.deck_repr, r.scores_repr, r.general_repr)
-        inputs = r.augment(*inputs)
-        inputs = r.normalise(*inputs)
-        inputs = r.prepare(*inputs)
-        return inputs
+    def prepare_model_inputs(self, repr_):
+        raw_inputs = (repr_.board_repr, repr_.deck_repr, repr_.scores_repr, repr_.general_repr)
+        inputs_normalised = repr_.normalise(*raw_inputs)
+        inputs_prepared = repr_.prepare(*inputs_normalised)
+        return inputs_prepared
 
     def choose_move(self, board, deck, score, other_score, turn_of, repr_fn, inference=False):
         move_combinations = board.get_all_possible_moves()
         possible_moves = combine_moves_and_deck(move_combinations, deck.get_deck())
-        representations, possible_moves_subset = repr_fn(board, deck, score, other_score, turn_of, possible_moves)
+        representations, possible_moves_subset = repr_fn(board, deck, score, other_score, 0, possible_moves)
 
         model_inputs = self.prepare_model_inputs(representations)
         move_values = self.run_model(model_inputs)

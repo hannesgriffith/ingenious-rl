@@ -22,7 +22,7 @@ def play_game(gameplay, params):
     strat_1, strat_2 = get_strategy_types(params)
     player_1 = get_player(params[1]["player_type"], board, strat_1, params=params[1])
     player_2 = get_player(params[2]["player_type"], board, strat_2, params=params[2])
-    winner = gameplay.play_test_game(player_1, player_2)
+    winner, _ = gameplay.play_test_game(player_1, player_2)
 
     return winner
 

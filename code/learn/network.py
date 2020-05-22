@@ -3,21 +3,46 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 def get_network(params):
-    if params["network_type"] == "mlp":
-        return MLP()
-    elif params["network_type"] == "conv":
-        return Conv()
+    if params["network_type"] == "mlp_v1":
+        return MLPV1()
+    elif params["network_type"] == "mlp_v2":
+        return MLPV2()
+    elif params["network_type"] == "conv_v1":
+        return ConvV1()
     else:
         raise ValueError("Incorrect network name.")
 
 def num_input_channels():
-    g = 8  # num grid input channels
-    v = 29 # num vector input channels
+    g = 11  # num grid input channels
+    v = 31  # num vector input channels
     return g, v
 
-class MLP(torch.nn.Module):
+class MLPV1(torch.nn.Module):
     def __init__(self):
-        super(MLP, self).__init__()
+        super(MLPV1, self).__init__()
+        _, self.v = num_input_channels()
+        self.h = 32
+
+        self.mlp = nn.Sequential(
+            nn.Linear(self.v, self.h),
+            nn.ReLU(),
+            nn.Linear(self.h, 1),
+            nn.Sigmoid()
+        )
+
+    def process_inputs(self, x_grid, x_vector):
+        b = x_vector.size()[0]
+        num_unoccupied = 11 * 21 - torch.sum(x_grid[:, 6].view(b, -1), dim=1).view(b, 1)
+        num_available = torch.sum(x_grid[:, 7].view(b, -1), dim=1).view(b, 1)
+        return torch.cat((x_vector, num_unoccupied, num_available), dim=1)
+
+    def forward(self, x_grid, x_vector):
+        x_in = self.process_inputs(x_grid, x_vector)
+        return self.mlp(x_in)
+
+class MLPV2(torch.nn.Module):
+    def __init__(self):
+        super(MLPV2, self).__init__()
         _, self.v = num_input_channels()
         self.h = 32
 
@@ -31,7 +56,8 @@ class MLP(torch.nn.Module):
         )
 
     def forward(self, x_grid, x_vector):
-        return self.mlp(x_vector)
+        x_in = self.process_inputs(x_grid, x_vector)
+        return self.mlp(x_in)
 
 class ResBlock(torch.nn.Module):
     def __init__(self, hidden_channels):
@@ -44,9 +70,9 @@ class ResBlock(torch.nn.Module):
         x = F.relu(self.conv_2(x) + x_in)
         return x
 
-class Conv(torch.nn.Module):
+class ConvV1(torch.nn.Module):
     def __init__(self):
-        super(Conv, self).__init__()
+        super(ConvV1, self).__init__()
         self.g, self.v = num_input_channels()
         self.num_blocks = 2
         self.conv_h = 32

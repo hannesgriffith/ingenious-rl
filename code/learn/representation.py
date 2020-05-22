@@ -6,9 +6,7 @@ from game.player import batch_peek_can_exchange_tiles
 def get_representation(params):
     type_ = params["representation"]
     if type_ == "v1":
-        return RepresentationGenerator(1)
-    elif type_ == "v2":
-        return RepresentationGenerator(2)
+        return RepresentationGenerator()
     else:
         raise ValueError("Incorrect representation generator name.")
 
@@ -21,7 +19,7 @@ class RepresentationGenerator:
     def __init__(self):
         self.version = 1
 
-    def generate(self, board, deck, score, other_score, ingenious, num_ingenious, can_exchange, should_exchange, turn_of):
+    def generate(self, board, deck, score, other_score, ingenious, num_ingenious, can_exchange, should_exchange, your_turn):
         board_repr = board.get_state_copy() # 11 x 11 x 8 (i x j x [6 colours, occupied, available])
         deck_repr = deck.get_state_copy() # 2 x 6 ([single tiles, double tiles] x [6 colours])
 
@@ -37,13 +35,13 @@ class RepresentationGenerator:
             should_exchange * can_exchange, # always 0 if can't exchange
             board.move_num), dtype=np.uint8) # (5,)
 
-        values_repr = np.zeros(2, dtype=np.float32)
+        values_repr = np.ones(2, dtype=np.float32) * 255
 
         new_reprs_buffer = self.get_new_reprs_buffer()
-        new_reprs_buffer.set_single_reprs_from_scratch(board_repr, deck_repr, scores_repr, general_repr, turn_of, values_repr)
+        new_reprs_buffer.set_single_reprs_from_scratch(board_repr, deck_repr, scores_repr, general_repr, your_turn, values_repr)
         return new_reprs_buffer
 
-    def generate_batched(self, board, deck, score, other_score, turn_of, possible_moves):
+    def generate_batched(self, board, deck, score, other_score, your_turn, possible_moves):
         b = possible_moves.shape[0] # possible moves shape: b x 8
         board_repr = board.batch_get_updated_states(possible_moves) # b x 11 x 11 x 8
         deck_repr = deck.batch_peek_next_states(possible_moves[:, 6:8]) # b x 2 x 6
@@ -92,7 +90,7 @@ class RepresentationGenerator:
         scores_repr_subset = scores_repr_stacked[valid_idxs].astype(np.uint8)
         general_repr_subset = general_repr_stacked[valid_idxs].astype(np.uint8)
 
-        turn_of_repr = np.full(valid_idxs.shape[0], turn_of, dtype=np.uint8)
+        turn_of_repr = np.full(valid_idxs.shape[0], your_turn, dtype=np.uint8)
         values_repr = np.zeros((valid_idxs.shape[0], 2), dtype=np.float32)
 
         new_reprs_buffer = self.get_new_reprs_buffer()
@@ -175,42 +173,52 @@ class RepresentationsBuffer():
     def get_examples_by_idxs(self, idxs):
         x = (self.board_repr[idxs], self.deck_repr[idxs], self.scores_repr[idxs], self.general_repr[idxs])
         y = self.values_repr[idxs, 0]
-        credit = self.values_repr[idxs, 1]
-        return x, y, credit
+        return x, y
 
-    def augment(self, board_repr, deck_repr, scores_repr, general_repr):
-        n = board_repr.shape[0]
+    def augment(self, input1, input2):
+        board_repr1, deck_repr1, scores_repr1, general_repr1 = input1
+        board_repr2, deck_repr2, scores_repr2, general_repr2 = input2
+
+        n = board_repr1.shape[0]
         ordering = np.array((0, 1, 2, 3, 4, 5)).astype(np.uint8)
 
         for i in range(n):
             np.random.shuffle(ordering)
             board_ordering = np.concatenate((ordering, np.array((6, 7)))).astype(np.uint8)
 
-            board_repr_example = board_repr[i]
-            deck_repr_example = deck_repr[i]
-            scores_repr_example = scores_repr[i]
+            board_repr_example1 = board_repr1[i]
+            deck_repr_example1 = deck_repr1[i]
+            scores_repr_example1 = scores_repr1[i]
 
-            board_repr_example_augmented = board_repr_example[:, :, board_ordering] # b x 11 x 11 x 8
-            deck_repr_example_augmented = deck_repr_example[:, ordering] # b x 2 x 6
-            scores_repr_example_augmented = scores_repr_example[:, ordering] # b x 2 x 6
+            board_repr_example_augmented1 = board_repr_example1[:, :, board_ordering] # b x 11 x 11 x 8
+            deck_repr_example_augmented1 = deck_repr_example1[:, ordering] # b x 2 x 6
+            scores_repr_example_augmented1 = scores_repr_example1[:, ordering] # b x 2 x 6
 
-            board_repr[i] = board_repr_example_augmented
-            deck_repr[i] = deck_repr_example_augmented
-            scores_repr[i] = scores_repr_example_augmented
+            board_repr1[i] = board_repr_example_augmented1
+            deck_repr1[i] = deck_repr_example_augmented1
+            scores_repr1[i] = scores_repr_example_augmented1
 
-        return (board_repr, deck_repr, scores_repr, general_repr)
+            board_repr_example2 = board_repr2[i]
+            deck_repr_example2 = deck_repr2[i]
+            scores_repr_example2 = scores_repr2[i]
 
-    def get_board_flip_ordering(self, randint):
-        board_flip_orderings = np.array((
-            (0, 1, 2, 3, 4, 5),
-            (1, 0, 5, 4, 3, 2),
-            (3, 2, 1, 0, 5, 4),
-            (5, 4, 3, 2, 1, 0),
-            (0, 1, 4, 5, 2, 3),
-            (2, 3, 0, 1, 4, 5),
-            (4, 5, 2, 3, 0, 1)
-        )).astype(np.uint8)
-        return board_flip_orderings[randint]
+            board_repr_example_augmented2 = board_repr_example2[:, :, board_ordering] # b x 11 x 11 x 8
+            deck_repr_example_augmented2 = deck_repr_example2[:, ordering] # b x 2 x 6
+            scores_repr_example_augmented2 = scores_repr_example2[:, ordering] # b x 2 x 6
+
+            board_repr2[i] = board_repr_example_augmented2
+            deck_repr2[i] = deck_repr_example_augmented2
+            scores_repr2[i] = scores_repr_example_augmented2
+
+        output1 = (board_repr1, deck_repr1, scores_repr1, general_repr1)
+        output2 = (board_repr2, deck_repr2, scores_repr2, general_repr2)
+
+        return (output1, output2)
+
+    def normalise2(self, input1, input2):
+        input1_prepared = self.normalise(*input1)
+        input2_prepared = self.normalise(*input2)
+        return (input1_prepared, input2_prepared)
 
     def normalise(self, board_repr, deck_repr, scores_repr, general_repr):
         board_repr_normalised = board_repr.astype(np.float32)       # b x 11 x 11 x 8
@@ -224,6 +232,11 @@ class RepresentationsBuffer():
 
         return (board_repr_normalised, deck_repr_normalised, scores_repr_normalised, general_repr_normalised)
 
+    def prepare2(self, input1, input2):
+        input1_prepared = self.prepare(*input1)
+        input2_prepared = self.prepare(*input2)
+        return (input1_prepared, input2_prepared)
+
     def prepare(self, board_repr, deck_repr, scores_repr, general_repr):
         b = board_repr.shape[0]
 
@@ -233,7 +246,9 @@ class RepresentationsBuffer():
         vector_input = np.hstack((deck_repr_flat, scores_repr_flat, general_repr_flat))
         
         grid_input_offset = self.offset_grid(board_repr)
-        grid_input_offset = np.transpose(grid_input_offset, (0, 3, 1, 2)) # NHWC -> NCHW
+        extra_feature_channels = self.get_extra_grid_feature_channels(grid_input_offset.shape[0])
+        grid_input_combined = self.concat_channels(grid_input_offset, extra_feature_channels)
+        grid_input_offset = np.transpose(grid_input_combined, (0, 3, 1, 2)) # NHWC -> NCHW
 
         return (grid_input_offset, vector_input)
 
@@ -250,3 +265,70 @@ class RepresentationsBuffer():
                     offset_grid[:, i, 2 * j, :] = board_repr[:, j, i, :]
 
         return offset_grid
+
+    def get_extra_grid_feature_channels(self, b):
+        playable_channels = self.create_playable_channels(b)
+        idx_channels = self.create_idx_channels(b)
+        extra_channels = self.concat_channels(playable_channels, idx_channels)
+        return extra_channels
+
+    def create_playable_channels(self, b):
+        channels = np.zeros((b, 11, 21, 1), dtype=np.uint8)
+        playable_channel = self.get_playable_channel()
+
+        for idx in range(b):
+            channels[idx] = playable_channel[0]
+
+        return channels.astype(np.float32)
+
+    def get_playable_channel(self):
+        channel = np.zeros((1, 11, 21, 1), dtype=np.uint8)
+        playable = np.array([
+            [0, 5], [0, 7], [0, 9], [0, 11], [0, 13], [0, 15],
+            [1, 4], [1, 6], [1, 8], [1, 10], [1, 12], [1, 14], [1, 16],
+            [2, 3], [2, 5], [2, 7], [2, 9],  [2, 11], [2, 13], [2, 15], [2, 17],
+            [3, 2], [3, 4], [3, 6], [3, 8],  [3, 10], [3, 12], [3, 14], [3, 16], [3, 18],
+            [4, 1], [4, 3], [4, 5], [4, 7],  [4, 9],  [4, 11], [4, 13], [4, 15], [4, 17], [4, 19],
+            [5, 0], [5, 2], [5, 4], [5, 6],  [5, 8],  [5, 10], [5, 12], [5, 14], [5, 16], [5, 18], [5, 20],
+            [6, 1], [6, 3], [6, 5], [6, 7],  [6, 9],  [6, 11], [6, 13], [6, 15], [6, 17], [6, 19],
+            [7, 2], [7, 4], [7, 6], [7, 8],  [7, 10], [7, 12], [7, 14], [7, 16], [7, 18],
+            [8, 3], [8, 5], [8, 7], [8, 9],  [8, 11], [8, 13], [8, 15], [8, 17],
+            [9, 4], [9, 6], [9, 8], [9, 10], [9, 12], [9, 14], [9, 16],
+            [10, 5], [10, 7], [10, 9], [10, 11], [10, 13], [10, 15]
+        ], dtype=np.uint8).reshape(-1, 2)
+
+        for idx in range(playable.shape[0]):
+            i, j = playable[idx]
+            channel[0, i, j, 0] = 1
+
+        return channel
+
+    def create_idx_channels(self, b):
+        channels = np.zeros((b, 11, 21, 2), dtype=np.uint8)
+        idx_channel = self.get_idx_channel()
+
+        for idx in range(b):
+            channels[idx, :, :, 0] = idx_channel[0, :, :, 0]
+            channels[idx, :, :, 1] = idx_channel[0, :, :, 1]
+
+        return channels
+
+    def get_idx_channel(self):
+        i_channel = np.ones((1, 11, 21, 1), dtype=np.float32)
+        j_channel = np.ones((1, 11, 21, 1), dtype=np.float32)
+
+        i_channel = i_channel * np.arange(11).astype(np.float32).reshape(1, 11, 1, 1)
+        i_channel = i_channel / 11.
+
+        j_channel = j_channel * np.arange(21).astype(np.float32).reshape(1, 1, 21, 1)
+        j_channel = j_channel / 21.
+
+        idx_channels = self.concat_channels(i_channel, j_channel)
+        return idx_channels.astype(np.float32)
+
+    def concat_channels(self, array1, array2):
+        array1 = np.transpose(array1, (3, 1, 2, 0))
+        array2 = np.transpose(array2, (3, 1, 2, 0))
+        concatenated = np.concatenate((array1, array2))
+        concatenated = np.transpose(concatenated, (3, 1, 2, 0))
+        return concatenated
