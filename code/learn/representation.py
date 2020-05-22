@@ -42,7 +42,7 @@ class RepresentationGenerator:
             should_exchange * can_exchange, # always 0 if can't exchange
             board.move_num,
             your_turn,
-            get_other(your_turn)), dtype=np.uint8) # (5,)
+            get_other(your_turn)), dtype=np.uint8) # (7,)
 
         values_repr = np.ones(2, dtype=np.float32) * 255
 
@@ -234,11 +234,11 @@ class RepresentationsBuffer():
         board_repr_normalised = board_repr.astype(np.float32)       # b x 11 x 11 x 8
         deck_repr_normalised = deck_repr.astype(np.float32)         # b x 2 x 6
         scores_repr_normalised = scores_repr.astype(np.float32)     # b x 2 x 6
-        general_repr_normalised = general_repr.astype(np.float32)   # b x 5
+        general_repr_normalised = general_repr.astype(np.float32)   # b x 7
 
         deck_repr_normalised /= 4.0
         scores_repr_normalised /= 18.0
-        general_repr_normalised /= np.array(((1, 2, 1, 1, 40))).astype(np.float32)
+        general_repr_normalised /= np.array(((1, 2, 1, 1, 40, 1, 1))).astype(np.float32)
 
         return (board_repr_normalised, deck_repr_normalised, scores_repr_normalised, general_repr_normalised)
 

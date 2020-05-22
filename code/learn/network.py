@@ -14,7 +14,7 @@ def get_network(params):
 
 def num_input_channels():
     g = 11  # num grid input channels
-    v = 31  # num vector input channels
+    v = 33  # num vector input channels
     return g, v
 
 class MLPV1(torch.nn.Module):
