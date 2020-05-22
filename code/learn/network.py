@@ -33,7 +33,7 @@ class MLPV1(torch.nn.Module):
     def process_inputs(self, x_grid, x_vector):
         b = x_vector.size()[0]
         num_unoccupied = (11 * 21 - torch.sum(x_grid[:, 6].view(b, -1), dim=1).view(b, 1)) / 85.
-        num_available = torch.sum(x_grid[:, 7].view(b, -1), dim=1).view(b, 1) / 30.
+        num_available = torch.sum(x_grid[:, 7].view(b, -1), dim=1).view(b, 1) / 20.
         return torch.cat((x_vector, num_unoccupied, num_available), dim=1)
 
     def forward(self, x_grid, x_vector):
