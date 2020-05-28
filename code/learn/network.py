@@ -17,6 +17,31 @@ def num_input_channels():
     v = 33  # num vector input channels
     return g, v
 
+def get_network_params():
+    return 0, 0, 29, 1
+
+def mlp2(in_channels, h_channels, out_channels, p=0.5):
+    return nn.Sequential(
+        nn.Linear(in_channels, h_channels),
+        nn.Dropout(p=p),
+        nn.ReLU(),
+        nn.Linear(h_channels, h_channels // 2),
+        nn.Dropout(p=p),
+        nn.ReLU(),
+        nn.Linear(h_channels // 2, out_channels),
+        nn.Sigmoid()
+    )
+
+class MLP2Only(torch.nn.Module):
+    def __init__(self):
+        super(MLP2Only, self).__init__()
+        _, _, self.f, self.o = get_network_params()
+        self.h = 64 # num linear hidden channels
+        self.mlp2 = mlp2(self.f, self.h, self.o, p=0.0)
+
+    def forward(self, x_grid, x_vector):
+        return self.mlp2(x_vector)
+
 class MLPV1(torch.nn.Module):
     def __init__(self):
         super(MLPV1, self).__init__()

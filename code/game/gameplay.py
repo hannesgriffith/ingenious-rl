@@ -8,7 +8,6 @@ from learn.representation import get_representation
 from learn.value import get_value_type
 from learn.network import get_network
 
-# option to replace tiles in deck
 # class to set up configuration, rather than get functions
 # add personal tiles tracker for agent
 
@@ -263,7 +262,6 @@ class TrainingGameplay:
         self.turn_of = None
         self.other = None
         self.ingenious = False
-        self.num_ingenious = 0
         self.should_exchange = {1: False, 2: False}
         self.num_moves = 0
 
@@ -309,40 +307,8 @@ class TrainingGameplay:
 
         if self.ingenious:
             self.ingenious = False
-            was_ingenious = True
         else:
             self.switch_player()
-            was_ingenious = False
-            self.num_ingenious = 0
-
-        if generate_representation: # turn of: 1 your turn, 0 not your turn
-            before_move_representation_self = self.representation.generate(
-                self.board,
-                self.players[self.turn_of].deck,
-                self.players[self.turn_of].score,
-                self.players[get_other_player(self.turn_of)].score,
-                was_ingenious,
-                self.num_ingenious,
-                self.players[self.turn_of].can_exchange_tiles(),
-                False,
-                1,
-                0
-                )
-            before_move_representation_other = self.representation.generate(
-                self.board,
-                self.players[get_other_player(self.turn_of)].deck,
-                self.players[get_other_player(self.turn_of)].score,
-                self.players[self.turn_of].score,
-                was_ingenious,
-                self.num_ingenious,
-                self.players[get_other_player(self.turn_of)].can_exchange_tiles(),
-                False,
-                0,
-                1
-                )
-        else:
-            before_move_representation_self = None
-            before_move_representation_other = None
 
         move_output = self.players[self.turn_of].make_move(
             self.players,
@@ -351,81 +317,45 @@ class TrainingGameplay:
             inference=False
         )
 
-        is_ingenious, _, _, should_exchange, num_ingenious = move_output
-        self.ingenious = is_ingenious
-        self.num_ingenious = num_ingenious
+        ingenious, _, _, should_exchange, num_ingenious = move_output
+        self.ingenious = ingenious
         self.should_exchange[self.turn_of] = should_exchange
 
-        if generate_representation: # turn of 0 yourself, 1 other player
-            identifier_1 = 1 if is_ingenious else 0
-            identifier_2 = 0 if is_ingenious else 1
-            after_move_representation_self = self.representation.generate(
+        if generate_representation:
+            move_representations = self.representation.generate(
                 self.board,
                 self.players[self.turn_of].deck,
                 self.players[self.turn_of].score,
                 self.players[get_other_player(self.turn_of)].score,
-                is_ingenious,
+                ingenious,
                 num_ingenious,
                 self.players[self.turn_of].can_exchange_tiles(),
                 should_exchange,
-                identifier_1,
-                identifier_2
-                )
-            after_move_representation_other = self.representation.generate(
-                self.board,
-                self.players[get_other_player(self.turn_of)].deck,
-                self.players[get_other_player(self.turn_of)].score,
-                self.players[self.turn_of].score,
-                is_ingenious,
-                num_ingenious,
-                self.players[get_other_player(self.turn_of)].can_exchange_tiles(),
-                False,
-                identifier_2,
-                identifier_1
+                np.array([self.turn_of], dtype=np.uint8)
                 )
         else:
-            after_move_representation_self = None
-            after_move_representation_other = None
+            move_representations = None
 
         if self.board.game_is_finished():
             winner = self.find_winner()
         else:
             winner = None
 
-        representations = (
-            before_move_representation_self,
-            before_move_representation_other,
-            after_move_representation_self,
-            after_move_representation_other,
-            )
-
-        return representations, winner
+        return move_representations, winner
 
     def generate_episode(self, p1, p2):
         while True:
             self.initialise_game(p1, p2)
             winner = None
-            representations = (
-                self.representation.get_new_reprs_buffer(), # before_move_representation_self
-                self.representation.get_new_reprs_buffer(), # before_move_representation_other
-                self.representation.get_new_reprs_buffer(), # after_move_representation_self
-                self.representation.get_new_reprs_buffer(), # after_move_representation_other
-            )
+            representations = self.representation.get_new_reprs_buffer()
             while winner is None:
                 move_representations, winner = self.next_(generate_representation=True)
-                for i, representation in enumerate(representations):
-                    representation.combine_reprs(move_representations[i])
+                representations.combine_reprs(move_representations)
                 del move_representations
 
             if winner != 0:
-                updated_representations = self.move_value.add_values_for_episode(representations, winner, self.turn_of)
-
-                before_states = updated_representations[0]
-                before_states.combine_reprs(updated_representations[1])
-                after_states = updated_representations[2]
-                after_states.combine_reprs(updated_representations[3])
-
-                return winner, (before_states, after_states)
+                updated_representations = self.move_value.add_values_for_episode(representations, winner)
+                return winner, updated_representations
 
     def play_test_game(self, p1, p2):
         while True:

@@ -3,27 +3,19 @@ from numba import jitclass, uint8, float32
 
 def get_value_type(params):
     if params["value_type"] == "v1":
-        return Value()
+        return ValueV1()
     else:
         raise ValueError("Incorrect value function name.")
 
-value_spec = [
+value_spec_v1 = [
     ("version", uint8)
 ]
 
-@jitclass(value_spec)
-class Value:
+@jitclass(value_spec_v1)
+class ValueV1:
     def __init__(self):
         self.version = 1
 
-    def add_values_for_episode(self, representations, winner, last_turn_player):
-        if last_turn_player == winner:
-            self_value = 1
-            other_value = 0
-        else:
-            self_value = 0
-            other_value = 1
-
-        representations[2].values_repr[-1 , 0] = self_value
-        representations[3].values_repr[-1 , 0] = other_value
+    def add_values_for_episode(self, representations, winner):
+        representations.values_repr[representations.turn_of_repr == winner] = 1
         return representations
