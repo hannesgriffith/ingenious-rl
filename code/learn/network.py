@@ -7,18 +7,17 @@ def get_network(params):
         return MLPV1()
     elif params["network_type"] == "mlp_v2":
         return MLPV2()
+    elif params["network_type"] == "mlp2_only":
+        return MLP2Only()
     elif params["network_type"] == "conv_v1":
         return ConvV1()
     else:
         raise ValueError("Incorrect network name.")
 
 def num_input_channels():
-    g = 11  # num grid input channels
-    v = 33  # num vector input channels
+    g = 8   # num grid input channels
+    v = 29  # num vector input channels
     return g, v
-
-def get_network_params():
-    return 0, 0, 29, 1
 
 def mlp2(in_channels, h_channels, out_channels, p=0.5):
     return nn.Sequential(
@@ -35,9 +34,9 @@ def mlp2(in_channels, h_channels, out_channels, p=0.5):
 class MLP2Only(torch.nn.Module):
     def __init__(self):
         super(MLP2Only, self).__init__()
-        _, _, self.f, self.o = get_network_params()
+        _, self.f = num_input_channels()
         self.h = 64 # num linear hidden channels
-        self.mlp2 = mlp2(self.f, self.h, self.o, p=0.0)
+        self.mlp2 = mlp2(self.f, self.h, 1, p=0.0)
 
     def forward(self, x_grid, x_vector):
         return self.mlp2(x_vector)
@@ -49,7 +48,7 @@ class MLPV1(torch.nn.Module):
         self.h = 32
 
         self.mlp = nn.Sequential(
-            nn.Linear(self.v, self.h),
+            nn.Linear(self.v + 2, self.h),
             nn.ReLU(),
             nn.Linear(self.h, 1),
             nn.Sigmoid()
@@ -72,7 +71,7 @@ class MLPV2(torch.nn.Module):
         self.h = 32
 
         self.mlp = nn.Sequential(
-            nn.Linear(self.v, self.h),
+            nn.Linear(self.v + 2, self.h),
             nn.ReLU(),
             nn.Linear(self.h, self.h),
             nn.ReLU(),
@@ -105,7 +104,7 @@ class ConvV1(torch.nn.Module):
         blocks = [ResBlock(self.conv_h) for _ in range(self.num_blocks)]
         self.res_stack = nn.Sequential(*blocks)
 
-        self.conv_in = nn.Conv2d(self.g + self.f, self.conv_h, (3, 5), padding=(1, 2), stride=1, bias=True)
+        self.conv_in = nn.Conv2d(self.g + 3 + self.v + 2, self.conv_h, (3, 5), padding=(1, 2), stride=1, bias=True)
         self.avg_pool = nn.AvgPool2d((11, 21), stride=1, padding=0)
         self.max_pool = nn.MaxPool2d((11, 21), stride=1, padding=0)
         self.conv_1d = nn.Conv2d(self.conv_h, self.o, 1, bias=True)
@@ -113,7 +112,7 @@ class ConvV1(torch.nn.Module):
 
     def combine_inputs(self, x_grid, x_vector):
         b = x_grid.size()[0]
-        x_vector = x_vector.view(b, self.f, 1, 1).repeat(1, 1, 11, 21)
+        x_vector = x_vector.view(b, self.v + 2, 1, 1).repeat(1, 1, 11, 21)
         return torch.cat((x_grid, x_vector), dim=1)
 
     def forward(self, x_grid, x_vector):

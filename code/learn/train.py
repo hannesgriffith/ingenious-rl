@@ -69,9 +69,8 @@ class SelfPlayTrainingSession:
             lr=self.p.initial_learning_rate,
             weight_decay=self.p.weight_decay
             )
-        self.criterion = nn.BCELoss(reduction='mean')
-        self.scheduler = optim.lr_scheduler.StepLR(self.optimizer, 1, gamma=0.1)
-        self.lr_tracker = self.p.initial_learning_rate
+        # self.criterion = nn.BCELoss(reduction='mean')
+        self.criterion = nn.MSELoss(reduction='mean')
 
         self.strategy_types = ["random", "max", "increase_min", "reduce_deficit", "mixed_4"]
         self.writer = SummaryWriter(os.path.join(self.logs_dir, "tensorboard"))
@@ -89,20 +88,6 @@ class SelfPlayTrainingSession:
         for p, strat in product([1, 2], self.strategy_types):
             self.players_rand[p].append(get_player("computer", None, strat))
 
-    # def sample_two_random_players(self):
-    #     randints = np.random.randint(0, high=3, size=2)
-    #     p1 = self.players_rand[1][randints[0]]
-    #     p2 = self.players_rand[2][randints[1]]
-    #     return p1, p2
-
-    # def fill_replay_buffer(self):
-    #     print("Filling replay buffer")
-    #     while self.replay_buffer.is_not_full():
-    #         print(f"Filled {len(self.replay_buffer)} / {self.replay_buffer.buffer_size}")
-    #         p1, p2 = self.sample_two_random_players()
-    #         _, new_reprs = self.game.generate_episode(p1, p2)
-    #         self.replay_buffer.add(new_reprs)
-
     def fill_replay_buffer(self, p1, p2):
         print("Filling replay buffer")
         while self.replay_buffer.is_not_full():
@@ -115,6 +100,8 @@ class SelfPlayTrainingSession:
 
         grid_input_device = torch.tensor(inputs[0], dtype=torch.float32, device=self.device)
         vector_input_device = torch.tensor(inputs[1], dtype=torch.float32, device=self.device)
+
+        labels[labels == 0] = -1
         labels_device = torch.tensor(labels, dtype=torch.float32, device=self.device)
 
         self.optimizer.zero_grad()
@@ -210,20 +197,14 @@ class SelfPlayTrainingSession:
             p2 = get_player("computer", None, "random")
 
         self.fill_replay_buffer(p1, p2)
-        # self.fill_replay_buffer()
         self.add_n_games_to_replay_buffer(self.training_p1, self.training_p2, 2)
 
         running_loss, running_error = 0.0, 0.0
-        self.add_graph_to_logs()
         best_win_rate_rule = 0.0
+        self.add_graph_to_logs()
 
-        eps, temp = self.exploration.get_params(0)
-        # self.training_p1.strategy.set_explore(True)
-        # self.training_p2.strategy.set_explore(True)
-        self.training_p1.strategy.set_explore(False)
-        self.training_p2.strategy.set_explore(False)
-        self.training_p1.strategy.set_explore_params(eps, temp)
-        self.training_p2.strategy.set_explore_params(eps, temp)
+        self.training_p1.strategy.set_explore(True)
+        self.training_p2.strategy.set_explore(True)
 
         print("Start training")
         for i in range(int(self.p.total_training_steps + 1)):
@@ -248,11 +229,6 @@ class SelfPlayTrainingSession:
                 vis_figs = generate_debug_visualisation(vis_inputs)
                 self.writer.add_figure('examples', vis_figs, global_step=i)
 
-            if i > 0 and i % int(self.p.reduce_lr_every_n_steps) == 0:
-                print("Reducing learning rate")
-                self.lr_tracker *= 0.1
-                self.scheduler.step()
-
             if i % int(self.p.test_every_n_steps) == 0:
                 self.latest_ckpt_path = self.logs_base_str.format(i)
                 torch.save(self.net.state_dict(), self.latest_ckpt_path)
@@ -270,10 +246,12 @@ class SelfPlayTrainingSession:
                     torch.save(self.training_p1.strategy.model.state_dict(), self.best_self_ckpt_path)
                     self.best_model_step = i
 
+                self.training_p1.strategy.set_explore(True)
+
                 win_rate_rule = 0.0
                 for strat in self.strategy_types:
                     print(f"Playing {self.p.n_other_games} test games against {strat}")
-                    win_rate, avg_loss, abs_error = self.play_n_test_games(self.test_player, self.players[strat], self.p.n_other_games)
+                    win_rate, avg_loss, abs_error = self.play_n_test_games(self.test_player, self.players[strat], self.p.n_other_games, learn=False)
                     self.writer.add_scalar(f'win_rates/{strat}', win_rate, i)
                     print("Win rate: {:.2f}".format(win_rate))
                     win_rate_rule += win_rate
@@ -282,14 +260,6 @@ class SelfPlayTrainingSession:
                     best_win_rate_rule = win_rate_rule
                     print("Best rule model improved!")
                     torch.save(self.net.state_dict(), self.best_rule_ckpt_path)
-
-                eps, temp = self.exploration.get_params(i)
-                # self.training_p1.strategy.set_explore(True)
-                # self.training_p2.strategy.set_explore(True)
-                self.training_p1.strategy.set_explore(False)
-                self.training_p2.strategy.set_explore(False)
-                self.training_p1.strategy.set_explore_params(eps, temp)
-                self.training_p2.strategy.set_explore_params(eps, temp)
 
         print(f"Final best model was at step {self.best_model_step}")
         self.writer.close()
