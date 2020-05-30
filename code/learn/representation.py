@@ -1,4 +1,4 @@
-from numba import jitclass, uint8, int32
+from numba import jitclass, njit, uint8, int32
 import numpy as np
 
 from game.player import batch_peek_can_exchange_tiles
@@ -105,7 +105,7 @@ class RepresentationGenerator:
         return new_reprs_buffer, possible_moves_subset
 
     def get_new_reprs_buffer(self):
-        return RepresentationsBuffer(self.version)
+        return RepresentationsBuffer()
 
 reprs_buffer_spec = [
     ('version', uint8),

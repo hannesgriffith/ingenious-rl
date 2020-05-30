@@ -200,7 +200,7 @@ class Deck:
         new_tiles = new_tiles.reshape(-1, 2).astype(np.uint8)
         self.deck = new_tiles.astype(np.uint8)
         self.num_in_deck = self.deck.shape[0]
-        self.remove_tiles_from_state(self.deck)
+        self.state = np.zeros((2, 6), dtype=np.uint8)
         self.update_state_for_tiles(new_tiles)
 
     def get_deck(self):

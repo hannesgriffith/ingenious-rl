@@ -51,7 +51,7 @@ class MLPV1(torch.nn.Module):
             nn.Linear(self.v + 2, self.h),
             nn.ReLU(),
             nn.Linear(self.h, 1),
-            nn.Sigmoid()
+            nn.Tanh()
         )
 
     def process_inputs(self, x_grid, x_vector):
@@ -76,8 +76,14 @@ class MLPV2(torch.nn.Module):
             nn.Linear(self.h, self.h),
             nn.ReLU(),
             nn.Linear(self.h, 1),
-            nn.Sigmoid()
+            nn.Tanh()
         )
+
+    def process_inputs(self, x_grid, x_vector):
+        b = x_vector.size()[0]
+        num_unoccupied = (11 * 21 - torch.sum(x_grid[:, 6].view(b, -1), dim=1).view(b, 1)) / 231.
+        num_available = torch.sum(x_grid[:, 7].view(b, -1), dim=1).view(b, 1) / 91.
+        return torch.cat((x_vector, num_unoccupied, num_available), dim=1)
 
     def forward(self, x_grid, x_vector):
         x_in = self.process_inputs(x_grid, x_vector)
@@ -108,7 +114,7 @@ class ConvV1(torch.nn.Module):
         self.avg_pool = nn.AvgPool2d((11, 21), stride=1, padding=0)
         self.max_pool = nn.MaxPool2d((11, 21), stride=1, padding=0)
         self.conv_1d = nn.Conv2d(self.conv_h, self.o, 1, bias=True)
-        self.sigmoid = nn.Sigmoid()
+        self.sigmoid = nn.Tanh()
 
     def combine_inputs(self, x_grid, x_vector):
         b = x_grid.size()[0]
@@ -127,3 +133,5 @@ class ConvV1(torch.nn.Module):
         x = self.conv_1d(x).squeeze()
         x = self.sigmoid(x)
         return x
+
+# Add conv v2, similar to above but with batch norm and more layers

@@ -77,6 +77,9 @@ def generate_debug_visualisation(vis_inputs):
     scores_repr = inputs[2]     # b x 2 x 6
     general_repr = inputs[3]    # b x 5
 
+    labels = labels.astype(np.float)
+    labels[labels == 0] = -1
+
     num = 4
     playable = get_playable_coords()
 

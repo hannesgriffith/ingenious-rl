@@ -268,10 +268,9 @@ class MixedStrategy4:
 
 class RLVanilla:
     def __init__(self, params=None):
-        self.explore = False
-        self.eps = 0.0
-        self.temp = None
         self.model = None
+        self.explore = False
+        self.explore_limit = params["explore_limit"]
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         if params is not None and "ckpt_path" in params:
             self.model = get_network(params).to(self.device)
@@ -279,10 +278,6 @@ class RLVanilla:
 
     def set_explore(self, explore):
         self.explore = explore
-
-    def set_explore_params(self, eps, temp):
-        self.eps = eps
-        self.temp = temp
 
     def set_model(self, model):
         self.model = model
@@ -313,21 +308,13 @@ class RLVanilla:
         move_values = self.run_model(model_inputs)
         # print(move_values)
 
-        if not self.explore or inference:
+        if inference or not self.explore or board.move_num > self.explore_limit:
             move_idx = np.argmax(move_values)
         else:
-            rand_val = np.random.uniform()
-            if rand_val <= self.eps:
-                num_moves = possible_moves_subset.shape[0]
-                move_idx = np.random.randint(0, high=num_moves - 1)
-            else:
-                if self.temp is None:
-                    move_idx = np.argmax(move_values)
-                else:
-                    num_moves = possible_moves_subset.shape[0]
-                    scaled = move_values ** self.temp
-                    probs = scaled / np.sum(scaled)
-                    move_idx = np.random.choice(num_moves, p=probs)
+            num_moves = possible_moves_subset.shape[0]
+            move_values = (move_values - np.min(move_values)) / np.max(move_values - np.min(move_values))
+            probs = move_values / np.sum(move_values)
+            move_idx = np.random.choice(num_moves, p=probs)
 
         return get_return_values(possible_moves_subset, representations, move_values, move_idx)
 

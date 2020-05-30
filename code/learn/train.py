@@ -56,7 +56,8 @@ class SelfPlayTrainingSession:
         make_dir_if_not_exists(os.path.join(self.logs_dir, "tensorboard"))
         self.p.save(self.logs_dir)
 
-        self.best_model_step = 0
+        self.best_self_model_step = 0
+        self.best_rule_model_step = 0
         self.best_self_ckpt_path = os.path.join(self.logs_dir, "best_self.pth")
         self.best_rule_ckpt_path = os.path.join(self.logs_dir, "best_rule.pth")
         self.latest_ckpt_path = os.path.join(self.logs_dir, "latest.pth")
@@ -64,12 +65,19 @@ class SelfPlayTrainingSession:
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         self.net = get_network(self.config).to(self.device)
 
-        self.optimizer = optim.Adam(
+        # self.optimizer = optim.Adam(
+        #     self.net.parameters(),
+        #     lr=self.p.initial_learning_rate,
+        #     weight_decay=self.p.weight_decay
+        #     )
+        # self.criterion = nn.BCELoss(reduction='mean')
+
+        self.optimizer = optim.SGD(
             self.net.parameters(),
             lr=self.p.initial_learning_rate,
+            momentum=0.9,
             weight_decay=self.p.weight_decay
             )
-        # self.criterion = nn.BCELoss(reduction='mean')
         self.criterion = nn.MSELoss(reduction='mean')
 
         self.strategy_types = ["random", "max", "increase_min", "reduce_deficit", "mixed_4"]
@@ -170,22 +178,19 @@ class SelfPlayTrainingSession:
     def train(self):
         self.initialise_rule_based_players()
 
-        self.training_p1 = get_player("computer", None, "rl")
-        self.training_p2 = get_player("computer", None, "rl")
+        self.training_p1 = get_player("computer", None, "rl", params={"explore_limit": self.p.explore_limit})
+        self.training_p2 = get_player("computer", None, "rl", params={"explore_limit": self.p.explore_limit})
         self.training_p1.strategy.set_model(get_network(self.config).to(self.device))
         self.training_p2.strategy.set_model(get_network(self.config).to(self.device))
 
-        self.test_player = get_player("computer", None, "rl")
+        self.test_player = get_player("computer", None, "rl", params={"explore_limit": self.p.explore_limit})
         self.test_player.strategy.set_model(self.net)
         self.test_player.strategy.set_explore(False)
 
         if self.p.start_ckpt_path is not None:
             self.net.load_state_dict(torch.load(self.p.start_ckpt_path))
-            self.latest_ckpt_path = self.p.start_ckpt_path
-        else:
-            self.latest_ckpt_path = self.logs_base_str.format("start")
-            torch.save(self.net.state_dict(), self.latest_ckpt_path)
 
+        torch.save(self.net.state_dict(), self.latest_ckpt_path)
         self.training_p1.strategy.model.load_state_dict(torch.load(self.latest_ckpt_path))
         self.training_p2.strategy.model.load_state_dict(torch.load(self.latest_ckpt_path))
 
@@ -211,7 +216,7 @@ class SelfPlayTrainingSession:
             print("Step {} / {}".format(i, self.p.total_training_steps))
 
             self.add_n_games_to_replay_buffer(self.training_p1, self.training_p2, self.p.episodes_per_step)
-            avg_loss, abs_error, vis_inputs = self.apply_n_learning_updates(self.p.episodes_per_step * self.p.updates_per_episode)
+            avg_loss, abs_error, vis_inputs = self.apply_n_learning_updates(self.p.updates_per_step)
             running_loss += avg_loss
             running_error += abs_error
 
@@ -222,7 +227,6 @@ class SelfPlayTrainingSession:
 
                 self.writer.add_scalar('metrics/train_loss', avg_running_loss, i)
                 self.writer.add_scalar('metrics/train_error', mean_abs_error, i)
-                self.writer.add_scalar('metrics/base_lr', self.lr_tracker, i)
                 self.log_network_weights_hists(i)
 
             if i > 0 and i % int(self.p.vis_every_n_steps) == 0:
@@ -230,8 +234,8 @@ class SelfPlayTrainingSession:
                 self.writer.add_figure('examples', vis_figs, global_step=i)
 
             if i % int(self.p.test_every_n_steps) == 0:
-                self.latest_ckpt_path = self.logs_base_str.format(i)
                 torch.save(self.net.state_dict(), self.latest_ckpt_path)
+                torch.save(self.net.state_dict(), os.path.join(self.logs_dir, f"ckpt-{i}.pth"))
                 self.training_p1.strategy.set_explore(False)
 
                 print(f"Playing {self.p.n_test_games} test games against self")
@@ -239,12 +243,12 @@ class SelfPlayTrainingSession:
                 self.writer.add_scalar('win_rates/rl', self_win_rate, i)
                 print("Win rate: {:.2f}".format(self_win_rate))
 
-                if self_win_rate >= 0.6:
+                if self_win_rate >= self.p.improvement_threshold:
                     print("Best self model improved!")
                     self.training_p1.strategy.model.load_state_dict(torch.load(self.latest_ckpt_path))
                     self.training_p2.strategy.model.load_state_dict(torch.load(self.latest_ckpt_path))
                     torch.save(self.training_p1.strategy.model.state_dict(), self.best_self_ckpt_path)
-                    self.best_model_step = i
+                    self.best_self_model_step = i
 
                 self.training_p1.strategy.set_explore(True)
 
@@ -260,8 +264,10 @@ class SelfPlayTrainingSession:
                     best_win_rate_rule = win_rate_rule
                     print("Best rule model improved!")
                     torch.save(self.net.state_dict(), self.best_rule_ckpt_path)
+                    self.best_rule_model_step = i
 
-        print(f"Final best model was at step {self.best_model_step}")
+        print(f"Final best self model was at step {self.best_self_model_step}")
+        print(f"Final best rule model was at step {self.best_rule_model_step}")
         self.writer.close()
 
 def parse_args():
