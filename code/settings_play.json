@@ -10,7 +10,7 @@
         "player_type": "computer",
         "strategy_type": "rl",
         "network_type": "mlp2_only",
-        "ckpt_path": "logs/mlp2_only_2020-05-02_22-52/best.pth",
+        "ckpt_path": "best_ckpts/mlp_v1_best_rule_3005_2225.pth",
         "show_deck": false
     },
     "game_type": "computer",
