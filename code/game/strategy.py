@@ -311,7 +311,6 @@ class RLVanilla:
 
         model_inputs = self.prepare_model_inputs(representations)
         move_values = self.run_model(model_inputs)
-        print(move_values)
 
         if inference or not self.explore or board.move_num > self.explore_limit:
             move_idx = np.argmax(move_values)

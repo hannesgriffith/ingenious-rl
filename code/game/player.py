@@ -45,7 +45,7 @@ class ComputerPlayer:
         self.strategy = get_strategy(strategy_type, params=params)
 
     def choose_strategy_move(self, players, turn_of, repr_fn, inference=False):
-        move, value = self.strategy.choose_move(
+        move, predicted_value = self.strategy.choose_move(
             self.board,
             players[turn_of].deck,
             players[turn_of].score,
@@ -54,7 +54,11 @@ class ComputerPlayer:
             repr_fn,
             inference=inference
         )
-        return move, value
+
+        if inference:
+            print(round((predicted_value + 1.) / 2., 2))
+
+        return move, predicted_value
 
     def make_move(self, players, turn_of, repr_fn, inference=False):
         move, _ = self.choose_strategy_move(players, turn_of, repr_fn, inference=inference)
