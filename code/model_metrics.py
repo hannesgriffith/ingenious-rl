@@ -12,7 +12,7 @@ from game.tiles import Tiles
 from game.player import get_player
 from learn.representation import get_representation
 
-N_GAMES = 1000
+N_GAMES = 100
 
 def play_game(gameplay, params_1, params_2):
     board, tiles = Board(), Tiles()
@@ -22,7 +22,7 @@ def play_game(gameplay, params_1, params_2):
     return winner
 
 def main():
-    test_player_params = {"player_type": "computer", "strategy_type": "mixed_4"}
+    test_player_params = {"player_type": "computer", "strategy_type": "rl", "network_type": "mlp_v1", "ckpt_path": "best_ckpts/mlp_v1_best_self_3005_2225.pth"}
     other_player_params = {
         "random": {"player_type": "computer", "strategy_type": "random"},
         "increase_min": {"player_type": "computer", "strategy_type": "increase_min"},
@@ -31,7 +31,7 @@ def main():
         "mixed_4": {"player_type": "computer", "strategy_type": "mixed_4"}
     }
 
-    gameplay = get_gameplay({"game_type": "training", "representation": "v2", "value_type": "v1"})
+    gameplay = get_gameplay({"game_type": "training", "representation": "v1", "value_type": "v1"})
     for strat, params2 in other_player_params.items():
         wins = []
         for _ in tqdm(range(N_GAMES)):

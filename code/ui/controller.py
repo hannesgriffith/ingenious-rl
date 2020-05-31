@@ -138,7 +138,6 @@ class Controller:
             self.display.draw_hex_select_blue_dark((x, y))
             self.display.draw_hex_tile((x, y), colour)
         self.display.set_last_move(move)
-        print("5", player, tuple(tile))
         self.display.remove_tile_from_deck(player, tuple(tile))
         pg.display.flip()
         self.display_message(message_1="Player {} has moved".format(player))
@@ -190,7 +189,6 @@ class Controller:
                         self.display.tile_is_in_deck(player, tile_display):
                     self.display.clear_last_move()
                     self.display.set_last_move(move)
-                    print("4", player, tuple(tile_display))
                     self.display.remove_tile_from_deck(player, tuple(tile_display))
                     pg.display.flip()
                     return move
@@ -233,7 +231,6 @@ class Controller:
                     message_1="Player {} exchanges".format(action["player"]),
                     message_2="all their tiles.")
                 for tile in self.display.deck[action["player"]]:
-                    print("1", tile, self.display.deck[action["player"]])
                     if tile is not None:
                         self.display.remove_tile_from_deck(action["player"], tile)
                 for _ in range(6):
@@ -244,7 +241,6 @@ class Controller:
                     message_1="Player {} chooses".format(action["player"]),
                     message_2="to exchange tiles")
                 for tile in self.display.deck[action["player"]]:
-                    print("2", tile, self.display.deck[action["player"]])
                     if tile is not None:
                         self.display.remove_tile_from_deck(action["player"], tile)
                 self.display_message(
@@ -262,7 +258,6 @@ class Controller:
                         message_1="Player {}:".format(action["player"]),
                         message_2="Discarding tiles")
                     for tile in self.display.deck[action["player"]]:
-                        print("3", tile, self.display.deck[action["player"]])
                         if tile is not None:
                             self.display.remove_tile_from_deck(action["player"], tile)
                 else:

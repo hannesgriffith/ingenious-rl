@@ -8,7 +8,7 @@ def get_representation(params):
     if type_ == "v1":
         return RepresentationGenerator()
     else:
-        raise ValueError("Incorrect representation generator name.")
+        raise ValueError("Incorrect representation name.")
 
 @njit
 def get_other(turn):

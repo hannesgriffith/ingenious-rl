@@ -270,11 +270,16 @@ class RLVanilla:
     def __init__(self, params=None):
         self.model = None
         self.explore = False
-        self.explore_limit = params["explore_limit"]
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
+        if params is not None and "explore_limit" in params:
+            self.explore_limit = params["explore_limit"]
+        else:
+            self.explore_limit = 0
+
         if params is not None and "ckpt_path" in params:
             self.model = get_network(params).to(self.device)
-            self.model.load_state_dict(torch.load(params["ckpt_path"]))
+            self.model.load_state_dict(torch.load(params["ckpt_path"], map_location=self.device))
 
     def set_explore(self, explore):
         self.explore = explore
@@ -306,7 +311,7 @@ class RLVanilla:
 
         model_inputs = self.prepare_model_inputs(representations)
         move_values = self.run_model(model_inputs)
-        # print(move_values)
+        print(move_values)
 
         if inference or not self.explore or board.move_num > self.explore_limit:
             move_idx = np.argmax(move_values)

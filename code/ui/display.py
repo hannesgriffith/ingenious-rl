@@ -180,7 +180,6 @@ class Display:
         self.screen.blit(self.images.dark_hex, self.eg_map[1])
 
     def add_tile_to_deck(self, deck_num, tile):
-        print(deck_num, tile, self.deck)
         deck_idx = self.deck[deck_num].index(None)
         self.deck[deck_num][deck_idx] = tile
         if self.show_decks[deck_num]:
@@ -191,7 +190,6 @@ class Display:
             pg.display.flip()
 
     def remove_tile_from_deck(self, deck_num, tile):
-        print(deck_num, tile, self.deck)
         if self.game_type == "real" and self.player_type[deck_num] == "human":
             return None # When we don't know real player's deck
 

@@ -188,11 +188,11 @@ class SelfPlayTrainingSession:
         self.test_player.strategy.set_explore(False)
 
         if self.p.start_ckpt_path is not None:
-            self.net.load_state_dict(torch.load(self.p.start_ckpt_path))
+            self.net.load_state_dict(torch.load(self.p.start_ckpt_path, map_location=self.device))
 
         torch.save(self.net.state_dict(), self.latest_ckpt_path)
-        self.training_p1.strategy.model.load_state_dict(torch.load(self.latest_ckpt_path))
-        self.training_p2.strategy.model.load_state_dict(torch.load(self.latest_ckpt_path))
+        self.training_p1.strategy.model.load_state_dict(torch.load(self.latest_ckpt_path, map_location=self.device))
+        self.training_p2.strategy.model.load_state_dict(torch.load(self.latest_ckpt_path, map_location=self.device))
 
         if self.p.start_ckpt_path is not None:
             p1 = self.training_p1
@@ -245,8 +245,8 @@ class SelfPlayTrainingSession:
 
                 if self_win_rate >= self.p.improvement_threshold:
                     print("Best self model improved!")
-                    self.training_p1.strategy.model.load_state_dict(torch.load(self.latest_ckpt_path))
-                    self.training_p2.strategy.model.load_state_dict(torch.load(self.latest_ckpt_path))
+                    self.training_p1.strategy.model.load_state_dict(torch.load(self.latest_ckpt_path, map_location=self.device))
+                    self.training_p2.strategy.model.load_state_dict(torch.load(self.latest_ckpt_path, map_location=self.device))
                     torch.save(self.training_p1.strategy.model.state_dict(), self.best_self_ckpt_path)
                     self.best_self_model_step = i
 
