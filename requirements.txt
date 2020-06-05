@@ -1,5 +1,5 @@
 numpy
-pygame
+pygame==1.9.6
 numba==0.48.0
 torch
 matplotlib

@@ -22,7 +22,7 @@ def play_game(gameplay, params_1, params_2):
     return winner
 
 def main():
-    test_player_params = {"player_type": "computer", "strategy_type": "rl", "network_type": "mlp_v1", "ckpt_path": "best_ckpts/mlp_v1_best_rule_3005_2225.pth"}
+    test_player_params = {"player_type": "computer", "strategy_type": "rl", "network_type": "mlp_v1", "ckpt_path": "best_ckpts/mlp_v1_best_rule_0106_2231.pth"}
     other_player_params = {
         "random": {"player_type": "computer", "strategy_type": "random"},
         "increase_min": {"player_type": "computer", "strategy_type": "increase_min"},
@@ -31,7 +31,9 @@ def main():
         "mixed_4": {"player_type": "computer", "strategy_type": "mixed_4"},
         "mlp2_only": {"player_type": "computer", "strategy_type": "rl", "network_type": "mlp2_only", "ckpt_path": "best_ckpts/mlp2_only_best_0205_2252.pth"},
         "mlp_v1_self": {"player_type": "computer", "strategy_type": "rl", "network_type": "mlp_v1", "ckpt_path": "best_ckpts/mlp_v1_best_self_3005_2225.pth"},
-        "mlp_v1_rule": {"player_type": "computer", "strategy_type": "rl", "network_type": "mlp_v1", "ckpt_path": "best_ckpts/mlp_v1_best_rule_3005_2225.pth"},
+        # "mlp_v1_rule": {"player_type": "computer", "strategy_type": "rl", "network_type": "mlp_v1", "ckpt_path": "best_ckpts/mlp_v1_best_rule_3005_2225.pth"},
+        "mlp_v1_self_v2": {"player_type": "computer", "strategy_type": "rl", "network_type": "mlp_v1", "ckpt_path": "best_ckpts/mlp_v1_best_self_0106_2231.pth"},
+        # "mlp_v1_rule_v2": {"player_type": "computer", "strategy_type": "rl", "network_type": "mlp_v1", "ckpt_path": "best_ckpts/mlp_v1_best_rule_0106_2231.pth"},
     }
 
     gameplay = get_gameplay({"game_type": "training", "representation": "v1", "value_type": "v1"})

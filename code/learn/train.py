@@ -188,6 +188,7 @@ class SelfPlayTrainingSession:
         self.test_player.strategy.set_explore(False)
 
         if self.p.start_ckpt_path is not None:
+            print("Loading starting checkpoint")
             self.net.load_state_dict(torch.load(self.p.start_ckpt_path, map_location=self.device))
 
         torch.save(self.net.state_dict(), self.latest_ckpt_path)
