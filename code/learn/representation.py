@@ -280,7 +280,7 @@ class RepresentationsBuffer():
             [0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0, 0,],
             [0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0, 0, 0,],
             [0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0, 0, 0, 0,]
-            ], dtype=np.uint8).reshape(11, 21)
+            ], dtype=np.uint8).reshape(1, 11, 21, 1)
 
     def create_idx_channels(self, b):
         channels = np.zeros((b, 11, 21, 1), dtype=np.uint8)
@@ -304,4 +304,4 @@ class RepresentationsBuffer():
             [0, 0, 0, 1, 0, 2, 0, 3, 0, 3, 0, 3, 0, 3, 0, 2, 0, 1, 0, 0, 0,],
             [0, 0, 0, 0, 1, 0, 2, 0, 2, 0, 2, 0, 2, 0, 2, 0, 1, 0, 0, 0, 0,],
             [0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0, 0, 0, 0,]
-            ], dtype=np.uint8).reshape(11, 21)
+            ], dtype=np.uint8).reshape(1, 11, 21, 1) / 6. # normalise

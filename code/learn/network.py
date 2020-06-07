@@ -111,7 +111,7 @@ class ConvV1(torch.nn.Module):
         blocks = [ResBlock(self.conv_h) for _ in range(self.num_blocks)]
         self.res_stack = nn.Sequential(*blocks)
 
-        self.conv_in = nn.Conv2d(self.g + 3 + self.v + 2, self.conv_h, (3, 5), padding=(1, 2), stride=1, bias=True)
+        self.conv_in = nn.Conv2d(self.g + 2 + self.v, self.conv_h, (3, 5), padding=(1, 2), stride=1, bias=True)
         self.avg_pool = nn.AvgPool2d((11, 21), stride=1, padding=0)
         self.max_pool = nn.MaxPool2d((11, 21), stride=1, padding=0)
         self.conv_1d = nn.Conv2d(self.conv_h, self.o, 1, bias=True)
@@ -119,7 +119,7 @@ class ConvV1(torch.nn.Module):
 
     def combine_inputs(self, x_grid, x_vector):
         b = x_grid.size()[0]
-        x_vector = x_vector.view(b, self.v + 2, 1, 1).repeat(1, 1, 11, 21)
+        x_vector = x_vector.view(b, self.v, 1, 1).repeat(1, 1, 11, 21)
         return torch.cat((x_grid, x_vector), dim=1)
 
     def forward(self, x_grid, x_vector):

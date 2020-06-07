@@ -1,4 +1,4 @@
-from numba import njit, jitclass
+from numba import njit, jitclass, uint8
 import numpy as np
 import torch
 
@@ -222,7 +222,7 @@ class IncreaseOtherMinStrategy:
         should_exchange = choose_should_exchange(inference)
         return (move, should_exchange), 0.5
 
-@jitclass([])
+@jitclass([('margin', uint8),])
 class ReduceDeficitStrategy:
     def __init__(self):
         self.margin = 5
@@ -252,7 +252,7 @@ class MixedStrategy2:
         should_exchange = choose_should_exchange(inference)
         return (move, should_exchange), 0.5
 
-@jitclass([])
+@jitclass([('margin', uint8),])
 class MixedStrategy3:
     def __init__(self):
         self.margin = 15
@@ -263,7 +263,7 @@ class MixedStrategy3:
         should_exchange = choose_should_exchange(inference)
         return (move, should_exchange), 0.5
 
-@jitclass([])
+@jitclass([('margin', uint8), ('count', uint8)])
 class MixedStrategy4:
     def __init__(self):
         self.margin = 5
