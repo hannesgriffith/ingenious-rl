@@ -1,4 +1,4 @@
-from numba import njit, jitclass, uint8
+from numba import njit
 import numpy as np
 import torch
 
@@ -182,7 +182,6 @@ def choose_should_exchange(inference):
     else:
         return np.random.randint(0, high=1) == 1
 
-@jitclass([])
 class RandomStrategy:
     def __init__(self):
         pass
@@ -192,7 +191,6 @@ class RandomStrategy:
         should_exchange = choose_should_exchange(inference)
         return (move, should_exchange), 0.5
 
-@jitclass([])
 class MaxStrategy:
     def __init__(self):
         pass
@@ -202,7 +200,6 @@ class MaxStrategy:
         should_exchange = choose_should_exchange(inference)
         return (move, should_exchange), 0.5
 
-@jitclass([])
 class IncreaseMinStrategy:
     def __init__(self):
         pass
@@ -212,7 +209,6 @@ class IncreaseMinStrategy:
         should_exchange = choose_should_exchange(inference)
         return (move, should_exchange), 0.5
 
-@jitclass([])
 class IncreaseOtherMinStrategy:
     def __init__(self):
         pass
@@ -222,7 +218,6 @@ class IncreaseOtherMinStrategy:
         should_exchange = choose_should_exchange(inference)
         return (move, should_exchange), 0.5
 
-@jitclass([('margin', uint8),])
 class ReduceDeficitStrategy:
     def __init__(self):
         self.margin = 5
@@ -232,7 +227,6 @@ class ReduceDeficitStrategy:
         should_exchange = choose_should_exchange(inference)
         return (move, should_exchange), 0.5
 
-@jitclass([])
 class MixedStrategy1:
     def __init__(self):
         pass
@@ -242,7 +236,6 @@ class MixedStrategy1:
         should_exchange = choose_should_exchange(inference)
         return (move, should_exchange), 0.5
 
-@jitclass([])
 class MixedStrategy2:
     def __init__(self):
         pass
@@ -252,7 +245,6 @@ class MixedStrategy2:
         should_exchange = choose_should_exchange(inference)
         return (move, should_exchange), 0.5
 
-@jitclass([('margin', uint8),])
 class MixedStrategy3:
     def __init__(self):
         self.margin = 15
@@ -263,7 +255,6 @@ class MixedStrategy3:
         should_exchange = choose_should_exchange(inference)
         return (move, should_exchange), 0.5
 
-@jitclass([('margin', uint8), ('count', uint8)])
 class MixedStrategy4:
     def __init__(self):
         self.margin = 5
