@@ -80,6 +80,9 @@ class SelfPlayTrainingSession:
             )
         self.criterion = nn.MSELoss(reduction='mean')
 
+        self.scheduler = optim.lr_scheduler.StepLR(self.optimizer, 1, gamma=0.1)
+        self.lr_tracker = self.p.initial_learning_rate
+
         self.strategy_types = ["random", "max", "increase_min", "reduce_deficit", "mixed_4"]
         self.writer = SummaryWriter(os.path.join(self.logs_dir, "tensorboard"))
 
@@ -228,11 +231,17 @@ class SelfPlayTrainingSession:
 
                 self.writer.add_scalar('metrics/train_loss', avg_running_loss, i)
                 self.writer.add_scalar('metrics/train_error', mean_abs_error, i)
+                self.writer.add_scalar('metrics/base_lr', self.lr_tracker, i)
                 self.log_network_weights_hists(i)
 
             if i > 0 and i % int(self.p.vis_every_n_steps) == 0:
                 vis_figs = generate_debug_visualisation(vis_inputs)
                 self.writer.add_figure('examples', vis_figs, global_step=i)
+
+            if i > 0 and i % int(self.p.reduce_lr_every_n_steps) == 0:
+                print("Reducing learning rate")
+                self.lr_tracker *= 0.1
+                self.scheduler.step()
 
             if i % int(self.p.test_every_n_steps) == 0:
                 torch.save(self.net.state_dict(), self.latest_ckpt_path)
@@ -244,7 +253,7 @@ class SelfPlayTrainingSession:
                 self.writer.add_scalar('win_rates/rl', self_win_rate, i)
                 print("Win rate: {:.2f}".format(self_win_rate))
 
-                if self_win_rate >= self.p.improvement_threshold:
+                if self_win_rate > self.p.improvement_threshold:
                     print("Best self model improved!")
                     self.training_p1.strategy.model.load_state_dict(torch.load(self.latest_ckpt_path, map_location=self.device))
                     self.training_p2.strategy.model.load_state_dict(torch.load(self.latest_ckpt_path, map_location=self.device))

@@ -9,8 +9,8 @@
         "name": "Computer",
         "player_type": "computer",
         "strategy_type": "rl",
-        "network_type": "mlp_v1",
-        "ckpt_path": "best_ckpts/mlp_v1_best_self_0106_2231.pth",
+        "network_type": "mlp_v2",
+        "ckpt_path": "best_ckpts/mlp_v2_best_self_0706_1459.pth",
         "show_deck": false
     },
     "game_type": "computer",

@@ -81,7 +81,7 @@ class MLPV2(torch.nn.Module):
 
     def process_inputs(self, x_grid, x_vector):
         b = x_vector.size()[0]
-        num_unoccupied = (11 * 21 - torch.sum(x_grid[:, 6].view(b, -1), dim=1).view(b, 1)) / 231.
+        num_unoccupied = (91. - 11 * 21 + torch.sum(x_grid[:, 6].view(b, -1), dim=1).view(b, 1)) / 91.
         num_available = torch.sum(x_grid[:, 7].view(b, -1), dim=1).view(b, 1) / 91.
         return torch.cat((x_vector, num_unoccupied, num_available), dim=1)
 
@@ -100,6 +100,7 @@ class ResBlock(torch.nn.Module):
         x = F.relu(self.conv_2(x) + x_in)
         return x
 
+# NOTE: edit the uv input channel to be the ring number
 class ConvV1(torch.nn.Module):
     def __init__(self):
         super(ConvV1, self).__init__()
