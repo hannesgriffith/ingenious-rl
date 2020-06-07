@@ -26,6 +26,10 @@ def get_strategy(strategy_type, params=None):
         return MixedStrategy4()
     elif strategy_type == "rl":
         return RLVanilla(params=params)
+    elif strategy_type == "rl_2_ply":
+        return RL2PlySearch(params=params)
+    elif strategy_type == "rl_3_ply":
+        return RL3PlySearch(params=params)
     else:
         raise ValueError("Invalid strategy type chosen.")
 
@@ -178,6 +182,7 @@ def choose_should_exchange(inference):
     else:
         return np.random.randint(0, high=1) == 1
 
+@jitclass([])
 class RandomStrategy:
     def __init__(self):
         pass
@@ -187,6 +192,7 @@ class RandomStrategy:
         should_exchange = choose_should_exchange(inference)
         return (move, should_exchange), 0.5
 
+@jitclass([])
 class MaxStrategy:
     def __init__(self):
         pass
@@ -196,6 +202,7 @@ class MaxStrategy:
         should_exchange = choose_should_exchange(inference)
         return (move, should_exchange), 0.5
 
+@jitclass([])
 class IncreaseMinStrategy:
     def __init__(self):
         pass
@@ -205,6 +212,7 @@ class IncreaseMinStrategy:
         should_exchange = choose_should_exchange(inference)
         return (move, should_exchange), 0.5
 
+@jitclass([])
 class IncreaseOtherMinStrategy:
     def __init__(self):
         pass
@@ -214,6 +222,7 @@ class IncreaseOtherMinStrategy:
         should_exchange = choose_should_exchange(inference)
         return (move, should_exchange), 0.5
 
+@jitclass([])
 class ReduceDeficitStrategy:
     def __init__(self):
         self.margin = 5
@@ -223,6 +232,7 @@ class ReduceDeficitStrategy:
         should_exchange = choose_should_exchange(inference)
         return (move, should_exchange), 0.5
 
+@jitclass([])
 class MixedStrategy1:
     def __init__(self):
         pass
@@ -232,6 +242,7 @@ class MixedStrategy1:
         should_exchange = choose_should_exchange(inference)
         return (move, should_exchange), 0.5
 
+@jitclass([])
 class MixedStrategy2:
     def __init__(self):
         pass
@@ -241,6 +252,7 @@ class MixedStrategy2:
         should_exchange = choose_should_exchange(inference)
         return (move, should_exchange), 0.5
 
+@jitclass([])
 class MixedStrategy3:
     def __init__(self):
         self.margin = 15
@@ -251,6 +263,7 @@ class MixedStrategy3:
         should_exchange = choose_should_exchange(inference)
         return (move, should_exchange), 0.5
 
+@jitclass([])
 class MixedStrategy4:
     def __init__(self):
         self.margin = 5
@@ -328,3 +341,62 @@ def get_return_values(possible_moves_subset, representations, move_values, move_
     should_exchange = representations.general_repr[move_idx, 3]
     best_move_value = move_values[move_idx]
     return (best_move, should_exchange), best_move_value
+
+class RL2PlySearch:
+    def __init__(self, params=None):
+        self.model = None
+        self.explore = False
+        self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
+        if params is not None and "explore_limit" in params:
+            self.explore_limit = params["explore_limit"]
+        else:
+            self.explore_limit = 0
+
+        if params is not None and "ckpt_path" in params:
+            self.model = get_network(params).to(self.device)
+            self.model.load_state_dict(torch.load(params["ckpt_path"], map_location=self.device))
+
+    def set_explore(self, explore):
+        self.explore = explore
+
+    def set_model(self, model):
+        self.model = model
+
+    def run_model(self, inputs):
+        self.model = self.model.eval()
+        with torch.no_grad():
+            grid_inputs = torch.from_numpy(inputs[0]).to(self.device)
+            vector_inputs = torch.from_numpy(inputs[1]).to(self.device)
+            move_values = self.model(grid_inputs, vector_inputs)
+            move_values = torch.squeeze(move_values).detach().cpu().numpy()
+            move_values = move_values.astype(np.float32)
+        return move_values
+
+    def prepare_model_inputs(self, r):
+        inputs = (r.board_repr, r.deck_repr, r.scores_repr, r.general_repr)
+        inputs = r.augment(*inputs)
+        inputs = r.normalise(*inputs)
+        inputs = r.prepare(*inputs)
+        return inputs
+
+    def choose_move(self, board, deck, score, other_score, turn_of, repr_fn, inference=False):
+        move_combinations = board.get_all_possible_moves()
+        possible_moves = combine_moves_and_deck(move_combinations, deck.get_deck())
+        representations, possible_moves_subset = repr_fn(board, deck, score, other_score, turn_of, possible_moves)
+
+        model_inputs = self.prepare_model_inputs(representations)
+        move_values = self.run_model(model_inputs)
+
+        if inference or not self.explore or board.move_num > self.explore_limit:
+            move_idx = np.argmax(move_values)
+        else:
+            num_moves = possible_moves_subset.shape[0]
+            move_values = (move_values - np.min(move_values)) / np.max(move_values - np.min(move_values))
+            probs = move_values / np.sum(move_values)
+            move_idx = np.random.choice(num_moves, p=probs)
+
+        return get_return_values(possible_moves_subset, representations, move_values, move_idx)
+
+class RL3PlySearch:
+    pass

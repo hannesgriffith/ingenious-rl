@@ -251,6 +251,13 @@ class RepresentationsBuffer():
         extra_channels = self.concat_channels(playable_channels, idx_channels)
         return extra_channels
 
+    def concat_channels(self, array1, array2):
+        array1 = np.transpose(array1, (3, 1, 2, 0))
+        array2 = np.transpose(array2, (3, 1, 2, 0))
+        concatenated = np.concatenate((array1, array2))
+        concatenated = np.transpose(concatenated, (3, 1, 2, 0))
+        return concatenated
+
     def create_playable_channels(self, b):
         channels = np.zeros((b, 11, 21, 1), dtype=np.uint8)
         playable_channel = self.get_playable_channel()
@@ -283,31 +290,84 @@ class RepresentationsBuffer():
         return channel
 
     def create_idx_channels(self, b):
-        channels = np.zeros((b, 11, 21, 2), dtype=np.uint8)
+        channels = np.zeros((b, 11, 21, 1), dtype=np.uint8)
         idx_channel = self.get_idx_channel()
 
         for idx in range(b):
-            channels[idx, :, :, 0] = idx_channel[0, :, :, 0]
-            channels[idx, :, :, 1] = idx_channel[0, :, :, 1]
+            channels[idx] = idx_channel[0]
 
         return channels
 
-    def get_idx_channel(self):
-        i_channel = np.ones((1, 11, 21, 1), dtype=np.float32)
-        j_channel = np.ones((1, 11, 21, 1), dtype=np.float32)
+    # def get_idx_channel(self):
+    #     i_channel = np.ones((1, 11, 21, 1), dtype=np.float32)
+    #     j_channel = np.ones((1, 11, 21, 1), dtype=np.float32)
 
-        i_channel = i_channel * np.arange(11).astype(np.float32).reshape(1, 11, 1, 1)
-        i_channel = i_channel / 11.
+    #     i_channel = i_channel * np.arange(11).astype(np.float32).reshape(1, 11, 1, 1)
+    #     i_channel = i_channel / 11.
 
-        j_channel = j_channel * np.arange(21).astype(np.float32).reshape(1, 1, 21, 1)
-        j_channel = j_channel / 21.
+    #     j_channel = j_channel * np.arange(21).astype(np.float32).reshape(1, 1, 21, 1)
+    #     j_channel = j_channel / 21.
 
-        idx_channels = self.concat_channels(i_channel, j_channel)
-        return idx_channels.astype(np.float32)
+    #     idx_channels = self.concat_channels(i_channel, j_channel)
+    #     return idx_channels.astype(np.float32)
 
-    def concat_channels(self, array1, array2):
-        array1 = np.transpose(array1, (3, 1, 2, 0))
-        array2 = np.transpose(array2, (3, 1, 2, 0))
-        concatenated = np.concatenate((array1, array2))
-        concatenated = np.transpose(concatenated, (3, 1, 2, 0))
-        return concatenated
+    def get_playable_channel(self):
+        channel = np.zeros((1, 11, 21, 1), dtype=np.uint8)
+        idx_1 = np.array([
+            [0, 5], [0, 7], [0, 9], [0, 11], [0, 13], [0, 15],
+            [1, 4], [1, 16],
+            [2, 3], [2, 17],
+            [3, 2], [3, 18],
+            [4, 1], [4, 19],
+            [5, 0], [5, 20],
+            [6, 1], [6, 19],
+            [7, 2], [7, 18],
+            [8, 3], [8, 17],
+            [9, 4], [9, 16],
+            [10, 5], [10, 7], [10, 9], [10, 11], [10, 13], [10, 15]
+        ], dtype=np.uint8).reshape(-1, 2)
+
+        idx_2 = np.array([
+            [1, 6], [1, 8], [1, 10], [1, 12], [1, 14],
+            [2, 5], [2, 15],
+            [3, 4], [3, 16],
+            [4, 3], [4, 17],
+            [5, 2], [5, 18],
+            [6, 3], [6, 17],
+            [7, 4], [7, 16],
+            [8, 5], [8, 15],
+            [9, 6], [9, 8], [9, 10], [9, 12], [9, 14]
+        ], dtype=np.uint8).reshape(-1, 2)
+
+        idx_3 = np.array([
+            [2, 7], [2, 9],  [2, 11], [2, 13],
+            [3, 6], [3, 14],
+            [4, 5], [4, 15],
+            [5, 4], [5, 16],
+            [6, 5], [6, 15],
+            [7, 6], [7, 14],
+            [8, 7], [8, 9],  [8, 11], [8, 13]
+        ], dtype=np.uint8).reshape(-1, 2)
+
+        idx_4 = np.array([
+            [3, 8],  [3, 10], [3, 12],
+            [4, 7],  [4, 13],
+            [5, 6],  [5, 14],
+            [6, 7],  [6, 13],
+            [7, 8],  [7, 10], [7, 12]
+        ], dtype=np.uint8).reshape(-1, 2)
+
+        idx_5 = np.array([
+            [4, 9],  [4, 11],
+            [5, 8],  [5, 10], [5, 12],
+            [6, 9],  [6, 11]
+        ], dtype=np.uint8).reshape(-1, 2)
+
+        idx_6 = np.array([[5, 10]], dtype=np.uint8).reshape(-1, 2)
+
+        for val, idx_playables in enumerate([idx_1, idx_2, idx_3, idx_4, idx_5, idx_6]):
+            for idx in range(idx_playables.shape[0]):
+                i, j = idx_playables[idx]
+                channel[0, i, j, 0] = val + 1
+
+        return channel
