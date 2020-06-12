@@ -64,6 +64,7 @@ class SelfPlayTrainingSession:
 
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         self.net = get_network(self.config).to(self.device)
+        print("Training using device:", self.device)
 
         # self.optimizer = optim.Adam(
         #     self.net.parameters(),

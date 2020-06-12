@@ -274,7 +274,9 @@ class RLVanilla:
     def __init__(self, params=None):
         self.model = None
         self.explore = False
+
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        print("Strategy using device:", self.device)
 
         if params is not None and "explore_limit" in params:
             self.explore_limit = params["explore_limit"]
