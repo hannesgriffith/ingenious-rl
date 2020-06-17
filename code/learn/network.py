@@ -13,6 +13,12 @@ def get_network(params):
         return ConvV1()
     elif params["network_type"] == "conv_v2":
         return ConvV2()
+    elif params["network_type"] == "conv_v2_plus":
+        return ConvV2Plus()
+    elif params["network_type"] == "conv_v3":
+        return ConvV3()
+    elif params["network_type"] == "conv_v4":
+        return ConvV4()
     else:
         raise ValueError("Incorrect network name.")
 
@@ -214,6 +220,53 @@ class ConvV2(nn.Module):
         x = self.tanh(x)
         return x
 
+class ConvV2Plus(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.g, self.v = num_input_channels()
+        self.num_blocks = 4
+        self.conv_h = 32
+
+        blocks = [ResBlockV2(self.conv_h) for _ in range(self.num_blocks)]
+        self.res_stack = nn.Sequential(*blocks)
+
+        self.conv_in = Hexagonal3x3Conv2d(self.g + self.v, self.conv_h)
+        self.conv_out = nn.Conv2d(2 * self.conv_h, 1, 1, stride=1, padding=0, bias=True)
+
+        self.combine_inputs = CombineInputs(self.v)
+        self.avg_pool = nn.AvgPool2d((11, 21), stride=1, padding=0)
+        self.max_pool = nn.MaxPool2d((11, 21), stride=1, padding=0)
+        self.tanh = nn.Tanh()
+
+        self.mask = torch.tensor([
+            [0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0, 0, 0, 0,],
+            [0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0, 0, 0,],
+            [0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0, 0,],
+            [0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0,],
+            [0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0,],
+            [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1,],
+            [0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0,],
+            [0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0,],
+            [0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0, 0,],
+            [0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0, 0, 0,],
+            [0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0, 0, 0, 0,]
+            ], dtype=torch.float32, requires_grad=False).view(1, 1, 11, 21)
+        self.mask = self.mask.to(torch.device("cuda:0" if torch.cuda.is_available() else "cpu"))
+
+    def forward(self, x_grid, x_vector):
+        x_in = self.combine_inputs(x_grid, x_vector) * self.mask
+        x = F.relu(self.conv_in(x_in))
+        x = self.res_stack(x)
+
+        x *= self.mask
+        x_avg = self.avg_pool(x)
+        x_max = self.max_pool(x)
+        x = torch.cat((x_avg, x_max), dim=1)
+
+        x = self.conv_out(x).squeeze()
+        x = self.tanh(x)
+        return x
+
 class Hexagonal5x5Conv2dConnected(nn.Conv2d):
     def __init__(self, in_channels, out_channels):
         super().__init__(in_channels, out_channels, (5, 9), stride=1, padding=(2, 4), bias=True)
@@ -278,12 +331,85 @@ class Hexagonal7x7Conv2dAll(nn.Conv2d):
     def forward(self, x_in):
         return F.conv2d(x_in, self.weight * self.mask, bias=self.bias, stride=1, padding=(3, 6))
 
-class IngeniousBlock(nn.Module):
+class IngeniousBlockV1(nn.Module):
+    def __init__(self, hidden_channels):
+        super().__init__()
+        self.h_outer = hidden_channels
+        self.h_inner = hidden_channels // 4
+        self.conv_in = nn.Conv2d(self.h_outer, self.h_inner, 1, bias=True)
+        self.conv_1x1_1 = nn.Conv2d(self.h_inner, self.h_inner, 1, bias=True)
+        self.conv_1x1_2 = nn.Conv2d(self.h_inner, self.h_inner, 1, bias=True)
+        self.conv_3x3_1 = Hexagonal3x3Conv2d(self.h_inner, self.h_inner)
+        self.conv_3x3_2 = Hexagonal3x3Conv2d(self.h_inner, self.h_inner)
+        self.conv_5x5_1 = Hexagonal5x5Conv2dConnected(self.h_inner, self.h_inner)
+        self.conv_5x5_2 = Hexagonal5x5Conv2dConnected(self.h_inner, self.h_inner)
+        self.conv_7x7_1 = Hexagonal7x7Conv2dConnected(self.h_inner, self.h_inner)
+        self.conv_7x7_2 = Hexagonal7x7Conv2dConnected(self.h_inner, self.h_inner)
+
+    def forward(self, x_in):
+        x = F.relu(self.conv_in(x_in))
+
+        x1 = self.conv_1x1_2(F.relu(self.conv_1x1_1(x)))
+        x2 = self.conv_3x3_2(F.relu(self.conv_3x3_1(x)))
+        x3 = self.conv_5x5_2(F.relu(self.conv_5x5_1(x)))
+        x4 = self.conv_7x7_2(F.relu(self.conv_7x7_1(x)))
+
+        x = torch.cat((x1, x2, x3, x4), dim=1)
+        return F.relu(x + x_in)
+
+class ConvV3(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.g, self.v = num_input_channels()
+        self.num_blocks = 4
+        self.conv_h = 32
+
+        blocks = [IngeniousBlockV1(self.conv_h) for _ in range(self.num_blocks)]
+        self.ingenious_stack = nn.Sequential(*blocks)
+
+        self.conv_in = nn.Conv2d(self.g + self.v, self.conv_h, 1, padding=0, bias=True)
+        self.conv_out = nn.Conv2d(2 * self.conv_h, 1, 1, stride=1, padding=0, bias=True)
+
+        self.combine_inputs = CombineInputs(self.v)
+        self.avg_pool = nn.AvgPool2d((11, 21), stride=1, padding=0)
+        self.max_pool = nn.MaxPool2d((11, 21), stride=1, padding=0)
+        self.tanh = nn.Tanh()
+
+        self.mask = torch.tensor([
+            [0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0, 0, 0, 0,],
+            [0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0, 0, 0,],
+            [0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0, 0,],
+            [0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0,],
+            [0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0,],
+            [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1,],
+            [0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0,],
+            [0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0,],
+            [0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0, 0,],
+            [0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0, 0, 0,],
+            [0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0, 0, 0, 0,]
+            ], dtype=torch.float32, requires_grad=False).view(1, 1, 11, 21)
+        self.mask = self.mask.to(torch.device("cuda:0" if torch.cuda.is_available() else "cpu"))
+
+    def forward(self, x_grid, x_vector):
+        x_in = self.combine_inputs(x_grid, x_vector) * self.mask
+        x = F.relu(self.conv_in(x_in))
+        x = self.ingenious_stack(x)
+
+        x *= self.mask
+        x_avg = self.avg_pool(x)
+        x_max = self.max_pool(x)
+        x = torch.cat((x_avg, x_max), dim=1)
+
+        x = self.conv_out(x).squeeze()
+        x = self.tanh(x)
+        return x
+        
+class IngeniousBlockV2(nn.Module):
     def __init__(self, hidden_channels):
         super().__init__()
         self.h_outer = hidden_channels
         self.h_inner = hidden_channels // 8
-        self.conv_1d = nn.Conv2d(self.h_outer, self.h_outer, 1, bias=True)
+        self.conv_in = nn.Conv2d(self.h_outer, self.h_outer, 1, bias=True)
         self.conv_3x3 = Hexagonal3x3Conv2d(self.h_inner, self.h_inner)
         self.conv_5x5_connected = Hexagonal5x5Conv2dConnected(self.h_inner, self.h_inner)
         self.conv_5x5_all = Hexagonal5x5Conv2dAll(self.h_inner, self.h_inner)
@@ -291,10 +417,26 @@ class IngeniousBlock(nn.Module):
         self.conv_7x7_all = Hexagonal7x7Conv2dAll(self.h_inner, self.h_inner)
         self.avg_pool = nn.AvgPool2d((11, 21), stride=1, padding=0)
         self.max_pool = nn.MaxPool2d((11, 21), stride=1, padding=0)
+        self.conv_out = nn.Conv2d(self.h_outer, self.h_outer, 1, bias=True)
+
+        self.mask = torch.tensor([
+            [0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0, 0, 0, 0,],
+            [0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0, 0, 0,],
+            [0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0, 0,],
+            [0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0,],
+            [0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0,],
+            [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1,],
+            [0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0,],
+            [0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0,],
+            [0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0, 0,],
+            [0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0, 0, 0,],
+            [0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0, 0, 0, 0,]
+            ], dtype=torch.float32, requires_grad=False).view(1, 1, 11, 21)
+        self.mask = self.mask.to(torch.device("cuda:0" if torch.cuda.is_available() else "cpu"))
 
     def forward(self, x_in):
         b = x_vector.size()[0]
-        x = F.relu(self.conv_1d(x_in))
+        x = F.relu(self.conv_in(x_in))
 
         x1 = self.conv_1d(x[0 : self.h_inner])
         x2 = self.conv_3x3(x[self.h_inner : 2 * self.h_inner])
@@ -309,17 +451,17 @@ class IngeniousBlock(nn.Module):
         x8 = self.max_pool(x[7 * self.h_inner : 8 * self.h_inner])
         x8 = x_vector.view(b, x8, 1, 1).repeat(1, 1, 11, 21)
 
-        x = torch.cat((x1, x2, x3, x4, x5, x6, x7, x8), dim=1)
-        return F.relu(x + x_in)
+        x = F.relu(torch.cat((x1, x2, x3, x4, x5, x6, x7, x8), dim=1)) * self.mask
+        return F.relu(self.conv_out(x) + x_in)
 
-class ConvV3(nn.Module):
+class ConvV4(nn.Module):
     def __init__(self):
         super().__init__()
         self.g, self.v = num_input_channels()
         self.num_blocks = 4
         self.conv_h = 64
 
-        blocks = [IngeniousBlock(self.conv_h) for _ in range(self.num_blocks)]
+        blocks = [IngeniousBlockV2(self.conv_h) for _ in range(self.num_blocks)]
         self.ingenious_stack = nn.Sequential(*blocks)
 
         self.conv_in = nn.Conv2d(self.g + self.v, self.conv_h, 1, padding=0, bias=True)
