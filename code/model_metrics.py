@@ -22,7 +22,7 @@ def play_game(gameplay, params_1, params_2):
     return winner
 
 def main():
-    test_player_params = {"player_type": "computer", "strategy_type": "rl", "network_type": "mlp_v2", "ckpt_path": "best_ckpts/mlp_v2_best_self_0706_1459.pth"}
+    test_player_params = {"player_type": "computer", "strategy_type": "rl", "network_type": "conv_v1", "ckpt_path": "best_ckpts/conv_v1_best_self_1206_1909.pth"}
     other_player_params = {
         "random": {"player_type": "computer", "strategy_type": "random"},
         "increase_min": {"player_type": "computer", "strategy_type": "increase_min"},
@@ -32,6 +32,7 @@ def main():
         "mlp2_only": {"player_type": "computer", "strategy_type": "rl", "network_type": "mlp2_only", "ckpt_path": "best_ckpts/mlp2_only_best_0205_2252.pth"},
         "mlp_v1_self_v2": {"player_type": "computer", "strategy_type": "rl", "network_type": "mlp_v1", "ckpt_path": "best_ckpts/mlp_v1_best_self_0106_2231.pth"},
         "mlp_v2_self_v1": {"player_type": "computer", "strategy_type": "rl", "network_type": "mlp_v2", "ckpt_path": "best_ckpts/mlp_v2_best_self_0706_1459.pth"},
+        "conv_v1": {"player_type": "computer", "strategy_type": "rl", "network_type": "conv_v1", "ckpt_path": "best_ckpts/conv_v1_best_self_1206_1909.pth"},
     }
 
     gameplay = get_gameplay({"game_type": "training", "representation": "v1", "value_type": "v1"})

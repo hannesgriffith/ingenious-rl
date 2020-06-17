@@ -66,13 +66,6 @@ class SelfPlayTrainingSession:
         self.net = get_network(self.config).to(self.device)
         print("Training using device:", self.device)
 
-        # self.optimizer = optim.Adam(
-        #     self.net.parameters(),
-        #     lr=self.p.initial_learning_rate,
-        #     weight_decay=self.p.weight_decay
-        #     )
-        # self.criterion = nn.BCELoss(reduction='mean')
-
         self.optimizer = optim.SGD(
             self.net.parameters(),
             lr=self.p.initial_learning_rate,
@@ -83,6 +76,11 @@ class SelfPlayTrainingSession:
 
         self.scheduler = optim.lr_scheduler.StepLR(self.optimizer, 1, gamma=0.1)
         self.lr_tracker = self.p.initial_learning_rate
+
+        if self.p.effective_batch_size % self.p.max_batch_size == 0:
+            self.accumulate_loss_n_times = self.p.effective_batch_size // self.p.max_batch_size
+        else:
+            self.accumulate_loss_n_times = self.p.effective_batch_size // self.p.max_batch_size + 1
 
         self.strategy_types = ["random", "max", "increase_min", "reduce_deficit", "mixed_4"]
         self.writer = SummaryWriter(os.path.join(self.logs_dir, "tensorboard"))
@@ -108,22 +106,25 @@ class SelfPlayTrainingSession:
             self.replay_buffer.add(new_reprs)
 
     def apply_learning_update(self):
-        inputs, labels, vis_inputs, idxs = self.replay_buffer.sample_training_minibatch()
+        for _ in range(self.accumulate_loss_n_times):
+            inputs, labels, vis_inputs, idxs = self.replay_buffer.sample_training_minibatch()
 
-        grid_input_device = torch.tensor(inputs[0], dtype=torch.float32, device=self.device)
-        vector_input_device = torch.tensor(inputs[1], dtype=torch.float32, device=self.device)
+            grid_input_device = torch.tensor(inputs[0], dtype=torch.float32, device=self.device)
+            vector_input_device = torch.tensor(inputs[1], dtype=torch.float32, device=self.device)
 
-        labels[labels == 0] = -1
-        labels_device = torch.tensor(labels, dtype=torch.float32, device=self.device)
+            labels[labels == 0] = -1
+            labels_device = torch.tensor(labels, dtype=torch.float32, device=self.device)
 
-        self.optimizer.zero_grad()
-        predictions = self.net(grid_input_device, vector_input_device)
-        loss = self.criterion(torch.squeeze(predictions), torch.squeeze(labels_device))
-        loss.backward()
+            self.optimizer.zero_grad()
+            predictions = self.net(grid_input_device, vector_input_device)
+            loss = self.criterion(torch.squeeze(predictions), torch.squeeze(labels_device))
+            normalised_loss = loss / float(self.accumulate_loss_n_times)
+            normalised_loss.backward()
+
         self.optimizer.step()
 
         labels_np = np.squeeze(labels).astype(np.float32)
-        loss_np = loss.detach().cpu().numpy().astype(np.float32)
+        loss_np = normalised_loss.detach().cpu().numpy().astype(np.float32)
         predictions_np = torch.squeeze(predictions).detach().cpu().numpy().astype(np.float32)
 
         diffs = np.abs(labels_np - predictions_np)
@@ -208,6 +209,7 @@ class SelfPlayTrainingSession:
 
         self.fill_replay_buffer(p1, p2)
         self.add_n_games_to_replay_buffer(self.training_p1, self.training_p2, 2)
+        self.net = self.net.to(self.device)
 
         running_loss, running_error = 0.0, 0.0
         best_win_rate_rule = 0.0

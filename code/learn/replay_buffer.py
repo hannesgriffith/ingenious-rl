@@ -6,8 +6,11 @@ from learn.representation import get_representation
 class ReplayBuffer(object):
     def __init__(self, params, work_dir=None):
         self.temp = float(params["replay_buffer_temp"])
-        self.batch_size = int(params["batch_size"])
         self.buffer_size = int(params["replay_buffer_size"])
+        self.batch_size = min([
+            int(params["effective_batch_size"]),
+            int(params["max_batch_size"])
+        ])
 
         self.buffer = get_representation(params).get_new_reprs_buffer()
         self.probs = np.ones(self.buffer_size, dtype=np.float32)
@@ -35,6 +38,7 @@ class ReplayBuffer(object):
     def sample_examples(self, num_to_sample):
         scaled_probs = self.probs ** self.temp
         probs_norm = (scaled_probs / np.sum(scaled_probs))
+        probs_norm[probs_norm < 0.] = 0.
         sampled_idxs = np.random.choice(self.buffer_size, size=num_to_sample, replace=False, p=probs_norm)
         examples, labels = self.buffer.get_examples_by_idxs(sampled_idxs)
         return examples, labels, sampled_idxs

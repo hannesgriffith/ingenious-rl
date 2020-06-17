@@ -276,7 +276,7 @@ class RLVanilla:
         self.explore = False
 
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-        print("Strategy using device:", self.device)
+        # print("Strategy using device:", self.device)
 
         if params is not None and "explore_limit" in params:
             self.explore_limit = params["explore_limit"]
@@ -287,11 +287,46 @@ class RLVanilla:
             self.model = get_network(params).to(self.device)
             self.model.load_state_dict(torch.load(params["ckpt_path"], map_location=self.device))
 
+        if params is not None and "max_batch_size" in params:
+            self.max_batch = params["max_batch_size"]
+        else:
+            self.max_batch = 1024
+
     def set_explore(self, explore):
         self.explore = explore
 
     def set_model(self, model):
         self.model = model
+
+    def prepare_model_inputs(self, r):
+        inputs = (r.board_repr, r.deck_repr, r.scores_repr, r.general_repr)
+        inputs = r.augment(*inputs)
+        inputs = r.normalise(*inputs)
+        inputs = r.prepare(*inputs)
+        return inputs
+
+    def predict_values(self, model_inputs):
+        """Split predictions over smaller sub-batches to avoid surpassing memory limits"""
+        num_inputs = model_inputs[0].shape[0]
+        num_full_minibatches = num_inputs // self.max_batch
+        remainder = num_inputs % self.max_batch
+
+        if num_full_minibatches == 0:
+            return self.run_model(model_inputs)
+        else:
+            all_values = np.zeros((1,)).astype(np.float32)
+            num_passes = num_full_minibatches + 1 if remainder > 0 else num_full_minibatches
+
+            for i in range(num_passes):
+                inputs_subset = (
+                    model_inputs[0][i * self.max_batch : (i + 1) * self.max_batch, ...],
+                    model_inputs[1][i * self.max_batch : (i + 1) * self.max_batch, ...]
+                    )
+                values_subset = self.run_model(inputs_subset)
+                values_subset = values_subset if values_subset.shape else np.expand_dims(values_subset, 0)
+                all_values = np.concatenate([all_values, values_subset])
+
+            return all_values[1:]
 
     def run_model(self, inputs):
         self.model = self.model.eval()
@@ -303,20 +338,13 @@ class RLVanilla:
             move_values = move_values.astype(np.float32)
         return move_values
 
-    def prepare_model_inputs(self, r):
-        inputs = (r.board_repr, r.deck_repr, r.scores_repr, r.general_repr)
-        inputs = r.augment(*inputs)
-        inputs = r.normalise(*inputs)
-        inputs = r.prepare(*inputs)
-        return inputs
-
     def choose_move(self, board, deck, score, other_score, turn_of, repr_fn, inference=False):
         move_combinations = board.get_all_possible_moves()
         possible_moves = combine_moves_and_deck(move_combinations, deck.get_deck())
         representations, possible_moves_subset = repr_fn(board, deck, score, other_score, turn_of, possible_moves)
 
         model_inputs = self.prepare_model_inputs(representations)
-        move_values = self.run_model(model_inputs)
+        move_values = self.predict_values(model_inputs)
 
         if inference or not self.explore or board.move_num > self.explore_limit:
             move_idx = np.argmax(move_values)
@@ -324,6 +352,7 @@ class RLVanilla:
             num_moves = possible_moves_subset.shape[0]
             move_values = (move_values - np.min(move_values)) / np.max(move_values - np.min(move_values))
             probs = move_values / np.sum(move_values)
+            probs[probs < 0.] = 0.
             move_idx = np.random.choice(num_moves, p=probs)
 
         return get_return_values(possible_moves_subset, representations, move_values, move_idx)
@@ -336,60 +365,7 @@ def get_return_values(possible_moves_subset, representations, move_values, move_
     return (best_move, should_exchange), best_move_value
 
 class RL2PlySearch:
-    def __init__(self, params=None):
-        self.model = None
-        self.explore = False
-        self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-
-        if params is not None and "explore_limit" in params:
-            self.explore_limit = params["explore_limit"]
-        else:
-            self.explore_limit = 0
-
-        if params is not None and "ckpt_path" in params:
-            self.model = get_network(params).to(self.device)
-            self.model.load_state_dict(torch.load(params["ckpt_path"], map_location=self.device))
-
-    def set_explore(self, explore):
-        self.explore = explore
-
-    def set_model(self, model):
-        self.model = model
-
-    def run_model(self, inputs):
-        self.model = self.model.eval()
-        with torch.no_grad():
-            grid_inputs = torch.from_numpy(inputs[0]).to(self.device)
-            vector_inputs = torch.from_numpy(inputs[1]).to(self.device)
-            move_values = self.model(grid_inputs, vector_inputs)
-            move_values = torch.squeeze(move_values).detach().cpu().numpy()
-            move_values = move_values.astype(np.float32)
-        return move_values
-
-    def prepare_model_inputs(self, r):
-        inputs = (r.board_repr, r.deck_repr, r.scores_repr, r.general_repr)
-        inputs = r.augment(*inputs)
-        inputs = r.normalise(*inputs)
-        inputs = r.prepare(*inputs)
-        return inputs
-
-    def choose_move(self, board, deck, score, other_score, turn_of, repr_fn, inference=False):
-        move_combinations = board.get_all_possible_moves()
-        possible_moves = combine_moves_and_deck(move_combinations, deck.get_deck())
-        representations, possible_moves_subset = repr_fn(board, deck, score, other_score, turn_of, possible_moves)
-
-        model_inputs = self.prepare_model_inputs(representations)
-        move_values = self.run_model(model_inputs)
-
-        if inference or not self.explore or board.move_num > self.explore_limit:
-            move_idx = np.argmax(move_values)
-        else:
-            num_moves = possible_moves_subset.shape[0]
-            move_values = (move_values - np.min(move_values)) / np.max(move_values - np.min(move_values))
-            probs = move_values / np.sum(move_values)
-            move_idx = np.random.choice(num_moves, p=probs)
-
-        return get_return_values(possible_moves_subset, representations, move_values, move_idx)
+    pass
 
 class RL3PlySearch:
     pass
