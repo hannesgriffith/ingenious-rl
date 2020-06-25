@@ -264,7 +264,7 @@ class Controller:
                     self.display_message(
                         message_1="Player {}:".format(action["player"]),
                         message_2="Picking up")
-                    self.gameplay.players[action["player"]].pick_up()
+                    self.gameplay.players[action["player"]].pick_up(self.gameplay.tiles)
                 self.update_deck(action["player"])
                 self.display.hide_confirm_cancel()
                 pg.display.flip()

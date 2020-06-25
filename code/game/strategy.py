@@ -341,14 +341,11 @@ class RLVanilla:
             probs[probs < 0.] = 0.
             move_idx = np.random.choice(num_moves, p=probs)
 
-        return get_return_values(possible_moves_subset, representations, move_values, move_idx)
+        best_move = possible_moves_subset[move_idx]
+        should_exchange = representations.general_repr[move_idx, 3]
+        best_move_value = move_values[move_idx]
 
-@njit
-def get_return_values(possible_moves_subset, representations, move_values, move_idx):
-    best_move = possible_moves_subset[move_idx]
-    should_exchange = representations.general_repr[move_idx, 3]
-    best_move_value = move_values[move_idx]
-    return (best_move, should_exchange), best_move_value
+        return (best_move, should_exchange), best_move_value
 
 class _RLNPlySearch(RLVanilla):
     def __init__(self, params=None):
@@ -362,70 +359,153 @@ class _RLNPlySearch(RLVanilla):
         deck.play_tile(tile_to_play)
         return board, score, deck, ingenious
 
+    def mock_turn(self, state, move, move_value, turn_of, repr_fn):
+        board, score, other_score, deck = state
+        game_finished = False
+
+        while True:
+            board, score, deck, ingenious = self.mock_move(move, board, score, deck)
+
+            if board.game_is_finished():
+                p1_score = score.get_score_copy()
+                p2_score = other_score.get_score_copy()
+                winner = find_winner_fast(p1_score, p2_score)
+                move_value = 1. if winner == turn_of else -1.
+                return (board, score, other_score, deck), True, move_value
+
+            if not ingenious:
+                return (board, score, other_score, deck), False, move_value
+
+            representations, possible_moves_subset = self.get_representations(board, deck, score, other_score, turn_of, repr_fn)
+            model_inputs = self.prepare_model_inputs(representations)
+            move_values = self.predict_values(model_inputs)
+
+            move_idx = np.argmax(move_values)
+            move = possible_moves_subset[move_idx]
+            move_value = move_values[move_idx]
+
 class RL2PlySearch(_RLNPlySearch):
     def __init__(self, params=None):
         super().__init__(params=params)
         self.search_n = 8
 
-    def choose_move(self, board, deck, score, other_score, turn_of, repr_fn, inference=False):
-        representations, possible_moves_subset = self.get_representations(board, deck, score, other_score, turn_of, repr_fn)
-        model_inputs = self.prepare_model_inputs(representations)
-        move_values = self.predict_values(model_inputs)
+    def choose_move(self, board_original, deck_original, score_original, other_score_original, turn_of, repr_fn, inference=False):
+        representations_original, possible_moves_subset_original = self.get_representations(board_original, deck_original, score_original, other_score_original, turn_of, repr_fn)
+        model_inputs_original = self.prepare_model_inputs(representations_original)
+        move_values_original = self.predict_values(model_inputs_original)
 
-        num_to_search = np.minimum(self.search_n, possible_moves_subset.shape[0])
-        top_k_indices = np.argsort(move_values)[-num_to_search:]
+        num_to_search = np.minimum(self.search_n, possible_moves_subset_original.shape[0])
+        top_k_indices = np.argsort(move_values_original)[-num_to_search:]
         top_k_values = np.zeros(num_to_search).astype(np.float32)
 
         for i in range(num_to_search):
-            game_finished = False
-            board2, score2, other_score2, deck2 = board.get_copy(), score.get_copy(), other_score.get_copy(), deck.get_copy()
+            # print(f"searching {i}")
+            board = board_original.get_copy()
+            score = score_original.get_copy()
+            other_score = other_score_original.get_copy()
+            deck = deck_original.get_copy()
 
             move_idx = top_k_indices[i]
-            move2 = possible_moves_subset[move_idx]
+            move = possible_moves_subset_original[move_idx]
+            move_value = move_values_original[move_idx]
 
-            while True:
-                board2, score2, deck2, ingenious = self.mock_move(move2, board2, score2, deck2)
-
-                if board2.game_is_finished():
-                    p1_score = score2.get_score_copy()
-                    p2_score = other_score2.get_score_copy()
-                    winner = find_winner_fast(p1_score, p2_score)
-                    top_k_values[i] = float(int(winner == 2))
-                    game_finished = True
-                    break
-
-                if not ingenious:
-                    break
-
-                representations2, possible_moves_subset2 = self.get_representations(board2, deck2, score2, other_score2, turn_of, repr_fn)
-                model_inputs2 = self.prepare_model_inputs(representations2)
-                move_values2 = self.predict_values(model_inputs2)
-
-                move_idx2 = np.argmax(move_values2)
-                move2 = possible_moves_subset2[move_idx2]
+            # Your move
+            state = (board, score, other_score, deck)
+            (board, score, _, deck), game_finished, move_value = self.mock_turn(state, move, move_value, turn_of, repr_fn)
 
             if game_finished:
+                top_k_values[i] = move_value
                 continue
 
-            dummy_deck = deck.create_dummy_deck()
-            representations3, possible_moves_subset3 = self.get_representations(board2, dummy_deck, other_score2, score2, get_other_player(turn_of), repr_fn)
-            model_inputs3 = self.prepare_model_inputs(representations3)
-            move_values3 = self.predict_values(model_inputs3)
+            # Other's move
+            representations, possible_moves_subset = self.get_representations(board, deck.create_dummy_deck(), other_score, score, get_other_player(turn_of), repr_fn)
+            model_inputs = self.prepare_model_inputs(representations)
+            move_values = self.predict_values(model_inputs)
 
-            move_idx3 = np.argmax(move_values3)
-            move3 = possible_moves_subset3[move_idx3]
-            board3, score3, _, _ = self.mock_move(move3, board2, other_score2, dummy_deck)
+            move_idx = np.argmax(move_values)
+            move = possible_moves_subset[move_idx]
+            move_value = move_values[move_idx]
 
-            if board3.game_is_finished():
-                p1_score = score2.get_score_copy()
-                p2_score = score3.get_score_copy()
-                winner = find_winner_fast(p1_score, p2_score)
-                top_k_values[i] = float(int(winner == 2))
-            else:
-                top_k_values[i] = np.max(move_values3)
+            state = (board, other_score, score, deck.create_dummy_deck())
+            _, _, move_value = self.mock_turn(state, move, move_value, get_other_player(turn_of), repr_fn)
 
-        best_move_idx = top_k_indices[np.argmin(top_k_values)]
-        return get_return_values(possible_moves_subset, representations, move_values, best_move_idx)
+            top_k_values[i] = -move_value
+
+        best_move_idx = top_k_indices[np.argmax(top_k_values)]
+        best_move_value = np.max(top_k_values)
+
+        best_move = possible_moves_subset_original[best_move_idx]
+        should_exchange = representations_original.general_repr[best_move_idx, 3]
+
+        return (best_move, should_exchange), best_move_value
 
 class RL3PlySearch(_RLNPlySearch):
-    pass
+    def __init__(self, params=None):
+        super().__init__(params=params)
+        self.search_n = 8
+
+    def choose_move(self, board_original, deck_original, score_original, other_score_original, turn_of, repr_fn, inference=False):
+        representations_original, possible_moves_subset_original = self.get_representations(board_original, deck_original, score_original, other_score_original, turn_of, repr_fn)
+        model_inputs_original = self.prepare_model_inputs(representations_original)
+        move_values_original = self.predict_values(model_inputs_original)
+
+        num_to_search = np.minimum(self.search_n, possible_moves_subset_original.shape[0])
+        top_k_indices = np.argsort(move_values_original)[-num_to_search:]
+        top_k_values = np.zeros(num_to_search).astype(np.float32)
+
+        for i in range(num_to_search):
+            # print(f"searching {i}")
+            board = board_original.get_copy()
+            score = score_original.get_copy()
+            other_score = other_score_original.get_copy()
+            deck = deck_original.get_copy()
+
+            move_idx = top_k_indices[i]
+            move = possible_moves_subset_original[move_idx]
+            move_value = move_values_original[move_idx]
+
+            # Your first move
+            state = (board, score, other_score, deck)
+            (board, score, _, deck), game_finished, move_value = self.mock_turn(state, move, move_value, turn_of, repr_fn)
+
+            if game_finished:
+                top_k_values[i] = move_value
+                continue
+
+            # Other's first move
+            representations, possible_moves_subset = self.get_representations(board, deck.create_dummy_deck(), other_score, score, get_other_player(turn_of), repr_fn)
+            model_inputs = self.prepare_model_inputs(representations)
+            move_values = self.predict_values(model_inputs)
+
+            move_idx = np.argmax(move_values)
+            move = possible_moves_subset[move_idx]
+            move_value = move_values[move_idx]
+
+            state = (board, other_score, score, deck.create_dummy_deck())
+            (board, other_score, _, _), game_finished, move_value = self.mock_turn(state, move, move_value, get_other_player(turn_of), repr_fn)
+
+            if game_finished:
+                top_k_values[i] = -move_value
+                continue
+
+            # Your second move
+            representations, possible_moves_subset = self.get_representations(board, deck, score, other_score, turn_of, repr_fn)
+            model_inputs = self.prepare_model_inputs(representations)
+            move_values = self.predict_values(model_inputs)
+
+            move_idx = np.argmax(move_values)
+            move = possible_moves_subset[move_idx]
+            move_value = move_values[move_idx]
+
+            state = (board, score, other_score, deck)
+            _, _, move_value = self.mock_turn(state, move, move_value, get_other_player(turn_of), repr_fn)
+
+            top_k_values[i] = move_value
+
+        best_move_idx = top_k_indices[np.argmax(top_k_values)]
+        best_move_value = np.max(top_k_values)
+
+        best_move = possible_moves_subset_original[best_move_idx]
+        should_exchange = representations_original.general_repr[best_move_idx, 3]
+
+        return (best_move, should_exchange), best_move_value
