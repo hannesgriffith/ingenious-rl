@@ -36,12 +36,53 @@ def batch_peek_can_exchange_tiles(decks, scores): # b x 6 x 2, b x 6
 
     return batch_can_exchange
 
-class ComputerPlayer:
-    def __init__(self, board, strategy_type, params=None):
-        self.player_type = "computer"
+@njit
+def can_exchange_tiles_fast(score, deck):
+    min_score = np.min(score)
+    min_colours = np.where(score == min_score)[0] # n
+    deck_flat = deck.flatten() # 12
+    matches = np.expand_dims(deck_flat, 1) == np.expand_dims(min_colours, 0) # 12 x n
+    return ~np.any(matches)
+
+class Player:
+    def __init__(self, board):
         self.board = board
         self.deck = Deck()
         self.score = Score()
+
+    def get_score(self):
+        return self.score.get_score()
+
+    def pick_up(self, game_tiles):
+        num = self.deck.get_num_to_pick_up()
+        new_tiles = game_tiles.pick_n_tiles_from_bag(num)
+        self.deck.add_tiles(new_tiles)
+
+    def exchange_tiles(self, game_tiles):
+        new_tiles = game_tiles.pick_n_tiles_from_bag(6)
+        game_tiles.add_tiles(self.deck.get_deck())
+        self.deck.replace_deck(new_tiles)
+
+    def update_deck(self, tiles):
+        self.deck.add_tiles(tiles)
+
+    def update_score(self, move):
+        move_score = self.board.calculate_move_score(move)
+        ingenious, _ = self.score.update_score(move_score)
+        return ingenious, self.get_score()
+
+    def can_exchange_tiles(self):
+        return can_exchange_tiles_fast(self.get_score(), self.deck.get_deck())
+
+class HumanPlayer(Player):
+    def __init__(self, board):
+        super().__init__(board)
+        self.player_type = "human"
+
+class ComputerPlayer(Player):
+    def __init__(self, board, strategy_type, params=None):
+        super().__init__(board)
+        self.player_type = "computer"
         self.strategy = get_strategy(strategy_type, params=params)
 
     def choose_strategy_move(self, players, turn_of, repr_fn, inference=False):
@@ -74,69 +115,6 @@ class ComputerPlayer:
         ingenious, num_ingenious = self.score.update_score(move_score)
         return ingenious, self.get_score(), num_ingenious
 
-    def get_score(self):
-        return self.score.get_score()
-
-    def update_deck(self, tiles):
-        self.deck.add_tiles(tiles)
-
-    def exchange_tiles(self, game_tiles):
-        new_tiles = game_tiles.pick_n_tiles_from_bag(6)
-        game_tiles.add_tiles(self.deck.get_deck())
-        self.deck.replace_deck(new_tiles)
-
-    def pick_up(self, game_tiles):
-        num = self.deck.get_num_to_pick_up()
-        new_tiles = game_tiles.pick_n_tiles_from_bag(num)
-        self.deck.add_tiles(new_tiles)
-
-    def can_exchange_tiles(self):
-        return can_exchange_tiles_fast(self.get_score(), self.deck.get_deck())
-
-@njit
-def can_exchange_tiles_fast(score, deck):
-    min_score = np.min(score)
-    min_colours = np.where(score == min_score)[0] # n
-    deck_flat = deck.flatten() # 12
-    matches = np.expand_dims(deck_flat, 1) == np.expand_dims(min_colours, 0) # 12 x n
-    return ~np.any(matches)
-
-class HumanPlayer:
-    def __init__(self, board):
-        self.player_type = "human"
-        self.board = board
-        self.deck = Deck()
-        self.score = Score()
-
-    def get_score(self):
-        return self.score.get_score()
-
-    def update_score(self, move):
-        move_score = self.board.calculate_move_score(move)
-        ingenious, _ = self.score.update_score(move_score)
-        return ingenious, self.get_score()
-
-    def update_deck(self, tiles):
-        self.deck.add_tiles(tiles)
-
-    def exchange_tiles(self, game_tiles):
-        new_tiles = game_tiles.pick_n_tiles_from_bag(6)
-        game_tiles.add_tiles(self.deck.get_deck())
-        self.deck.replace_deck(new_tiles)
-
-    def pick_up(self, game_tiles):
-        num = self.deck.get_num_to_pick_up()
-        new_tiles = game_tiles.pick_n_tiles_from_bag(num)
-        self.deck.add_tiles(new_tiles)
-
-    def can_exchange_tiles(self):
-        score = self.get_score() # 6
-        min_score = np.min(score) # 1
-        min_colours = np.where(score == min_score)[0] # n
-        deck_flat = self.deck.get_deck().flatten() # 12
-        matches = deck_flat[:, np.newaxis] == min_colours[np.newaxis, :] # 12 x n
-        return not np.any(matches)
-
 score_spec = [
     ('score', uint8[:]),
 ]
@@ -145,6 +123,11 @@ score_spec = [
 class Score:
     def __init__(self):
         self.score = np.zeros((6,), dtype=np.uint8)
+
+    def get_copy(self):
+        score_copy = Score()
+        score_copy.score = np.copy(self.score)
+        return score_copy
 
     def get_score(self):
         return self.score
@@ -185,6 +168,7 @@ class Score:
 
         return updated_scores, ingenious_batch, counts_diff_batch
 
+
 deck_spec = [
     ('deck_size', uint8),
     ('num_in_deck', uint8),
@@ -199,6 +183,14 @@ class Deck:
         self.num_in_deck = 0
         self.deck = np.zeros((6, 2), dtype=np.uint8)
         self.state = np.zeros((2, 6), dtype=np.uint8)
+
+    def get_copy(self):
+        deck_copy = Deck()
+        deck_copy.deck_size = self.deck_size
+        deck_copy.num_in_deck = self.num_in_deck
+        deck_copy.deck = np.copy(self.deck)
+        deck_copy.state = np.copy(self.state)
+        return deck_copy
 
     def replace_deck(self, new_tiles):
         new_tiles = new_tiles.reshape(-1, 2).astype(np.uint8)
@@ -331,3 +323,20 @@ class Deck:
         deck_as_list = self.aslist()
         for i in deck_as_list:
             yield (i[0] + 1, i[1] + 1)
+    
+    def create_dummy_deck(self):
+        dummy_deck = Deck()
+        dummy_deck.deck = np.array((
+            (0, 0), (0, 1), (0, 2), (0, 3), (0, 4), (0, 5),
+            (1, 1), (1, 2), (1, 3), (1, 4), (1, 5),
+            (2, 2), (2, 3), (2, 4), (2, 5),
+            (3, 3), (3, 4), (3, 5),
+            (4, 4), (4, 5),
+            (5, 5)
+            ), dtype=np.uint8)
+        dummy_deck.state = np.array(
+            (
+                (2, 2, 2, 2, 2, 2),
+                (2, 2, 2, 2, 2, 2)
+            ), dtype=np.uint8)
+        return dummy_deck

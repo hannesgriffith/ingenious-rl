@@ -67,7 +67,8 @@ class Board:
         self.s = np.zeros((3, self.side + 2, self.side + 2, self.side + 2, 6), dtype=np.uint8)
         self.state = np.zeros((self.side, self.side, 8), dtype=np.uint8) # 6 colours, occupied, available
 
-        self.initialise_conversion()
+        self.conversion = self.get_new_conversion_dict()
+
         self.set_playable_coords()
         self.initialise_occupied()
         self.define_connectivity_kernels()
@@ -76,6 +77,29 @@ class Board:
         self.initialise_possible_moves()
         self.initialise_state()
         # self.set_possible_tiles()
+
+    def get_copy(self):
+        board_copy = Board()
+        board_copy.n = self.n
+        board_copy.side = self.side
+        board_copy.move_num = self.move_num
+
+        board_copy.first_move = np.copy(self.first_move)
+        board_copy.occupied = np.copy(self.occupied)
+        board_copy.available = np.copy(self.available)
+        board_copy.last_available = np.copy(self.last_available)
+        board_copy.possible_moves = np.copy(self.possible_moves)
+        board_copy.playable_coords = np.copy(self.playable_coords)
+        board_copy.first_new_possible_moves = np.copy(self.first_new_possible_moves)
+
+        board_copy.k = np.copy(self.k)
+        board_copy.f = np.copy(self.f)
+        board_copy.c = np.copy(self.c)
+        board_copy.s = np.copy(self.s)
+        board_copy.state = np.copy(self.state)
+        board_copy.conversion = self.get_new_conversion_dict()
+
+        return board_copy
 
     def set_playable_coords(self):
         self.playable_coords = np.array([
@@ -592,8 +616,8 @@ class Board:
         i2, j2 = tuple_2d
         return i2, j2
 
-    def initialise_conversion(self):
-        self.conversion = {
+    def get_new_conversion_dict(self):
+        return {
             (0, 9, 6):  (0, 4),
             (0, 10, 5): (0, 5),
             (1, 10, 4): (0, 6),

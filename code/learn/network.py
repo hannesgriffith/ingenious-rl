@@ -225,12 +225,12 @@ class ConvV2Plus(nn.Module):
         super().__init__()
         self.g, self.v = num_input_channels()
         self.num_blocks = 4
-        self.conv_h = 32
+        self.conv_h = 48
 
         blocks = [ResBlockV2(self.conv_h) for _ in range(self.num_blocks)]
         self.res_stack = nn.Sequential(*blocks)
 
-        self.conv_in = Hexagonal3x3Conv2d(self.g + self.v, self.conv_h)
+        self.conv_in = nn.Conv2d(self.g + self.v, self.conv_h, 1, stride=1, padding=0, bias=True)
         self.conv_out = nn.Conv2d(2 * self.conv_h, 1, 1, stride=1, padding=0, bias=True)
 
         self.combine_inputs = CombineInputs(self.v)
@@ -459,7 +459,7 @@ class ConvV4(nn.Module):
         super().__init__()
         self.g, self.v = num_input_channels()
         self.num_blocks = 4
-        self.conv_h = 64
+        self.conv_h = 48
 
         blocks = [IngeniousBlockV2(self.conv_h) for _ in range(self.num_blocks)]
         self.ingenious_stack = nn.Sequential(*blocks)
