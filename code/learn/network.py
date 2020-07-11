@@ -20,6 +20,8 @@ def get_network(params):
         return ConvV2Plus()
     elif params["network_type"] == "conv_v3":
         return ConvV3()
+    elif params["network_type"] == "conv_v4":
+        return ConvV4()
     else:
         raise ValueError("Incorrect network name.")
 
@@ -320,8 +322,8 @@ class ConvV3(nn.Module):
     def __init__(self):
         super().__init__()
         self.g, self.v = num_input_channels()
-        self.num_blocks = 10
-        self.num_hidden_units = 64
+        self.num_blocks = 8
+        self.num_hidden_units = 48
 
         self.activations_mask = get_hexagonal_activations_mask()
         self.activations_mask = self.activations_mask.to(torch.device("cuda:0" if torch.cuda.is_available() else "cpu"))
@@ -360,4 +362,48 @@ class ConvV3(nn.Module):
 
         x = self.fc_out(self.dropout_out(x))
         x = self.tanh(x)
+        return x
+
+class SeparableConv(nn.Module):
+    def __init__(self, hidden_channels):
+        super().__init__()
+        self.conv_depthwise = nn.Conv2d(hidden_channels, hidden_channels, (3, 5), padding=(1, 2), groups=hidden_channels, bias=True)
+        self.conv_pointwise = nn.Conv2d(hidden_channels, hidden_channels, 1, padding=0, bias=True)
+
+    def forward(self, x_in):
+        return self.conv_pointwise(swish(self.conv_depthwise(x_in)))
+
+class Block(nn.Module):
+    def __init__(self, hidden_channels):
+        super().__init__()
+        # self.conv_1 = nn.Conv2d(hidden_channels, hidden_channels, (3, 5), padding=(1, 2), bias=True)
+        # self.conv_2 = nn.Conv2d(hidden_channels, hidden_channels, (3, 5), padding=(1, 2), bias=True)
+        self.conv_1 = SeparableConv(hidden_channels)
+        self.conv_2 = SeparableConv(hidden_channels)
+
+    def forward(self, x_in):
+        x = swish(self.conv_1(x_in))
+        x = self.conv_2(x) + x_in
+        return x
+
+class ConvV4(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.g, self.v = num_input_channels()
+        self.num_blocks = 8
+        self.num_hidden_units = 64
+
+        self.combine_inputs = CombineInputs(self.v)
+        self.conv_in = nn.Conv2d(self.g + self.v, self.num_hidden_units, kernel_size=1)
+        self.res_stack = nn.Sequential(*[Block(self.num_hidden_units) for _ in range(self.num_blocks)])
+        self.max_pool = nn.MaxPool2d((11, 21), stride=1, padding=0)
+        self.avg_pool = nn.AvgPool2d((11, 21), stride=1, padding=0)
+        self.fc_out = nn.Linear(2 * self.num_hidden_units, 1, bias=True)
+        self.tanh = nn.Tanh()
+
+    def forward(self, x_grid, x_vector):
+        x = swish(self.conv_in(self.combine_inputs(x_grid, x_vector)))
+        x = self.res_stack(x)
+        x = torch.cat([self.max_pool(x), self.avg_pool(x)], dim=1)
+        x = self.tanh(self.fc_out(x.squeeze()))
         return x

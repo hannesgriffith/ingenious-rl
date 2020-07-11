@@ -43,7 +43,6 @@ class SelfPlayTrainingSession:
         self.game = get_gameplay(self.config)
         self.repr = get_representation(self.config)
         self.replay_buffer = ReplayBuffer(self.config)
-        self.exploration = get_exploration_policy(self.config)
 
         self.logs_dir = "logs/self_play_{}_{}".format(self.p.network_type, time.strftime("%Y-%m-%d_%H-%M"))
         self.logs_base_str = os.path.join(self.logs_dir, "ckpt-{}.pth")
@@ -225,7 +224,7 @@ class SelfPlayTrainingSession:
         self.training_p2.strategy.set_model(self.get_new_network())
 
         self.test_player = get_player("computer", None, "rl", params={"max_eval_batch_size": self.p.max_eval_batch_size})
-        self.test_player.strategy.set_model(self.net)
+        self.test_player.strategy.set_model(self.get_new_network())
 
         if self.p.restore_ckpt_dir is not None:
             print("Loading checkpoint")
@@ -284,12 +283,14 @@ class SelfPlayTrainingSession:
 
             if i > 0 and self.steps_since_improvement >= int(self.p.reduce_lr_threshold):
                 print("Reducing learning rate")
+                self.steps_since_improvement = 0
                 self.lr_tracker *= 0.1
                 self.scheduler.step()
 
             if i % int(self.p.test_every_n_steps) == 0:
                 self.save_model(self.latest_ckpt_path)
-                self.save_model(os.path.join(self.logs_dir, f"ckpt-{i}.pth"))
+                copyfile(self.latest_ckpt_path, os.path.join(self.logs_dir, f"ckpt-{i}.pth"))
+                self.test_player.strategy.load_model(self.latest_ckpt_path)
                 self.save_optimiser()
 
                 print(f"Playing {self.p.n_test_games} test games against self")
@@ -318,7 +319,7 @@ class SelfPlayTrainingSession:
                 if win_rate_rule > best_win_rate_rule:
                     best_win_rate_rule = win_rate_rule
                     print("Best rule model improved!")
-                    self.save_model(self.best_rule_ckpt_path)
+                    copyfile(self.latest_ckpt_path, self.best_rule_ckpt_path)
                     self.best_rule_model_step = i
 
                 self.save_training_state()
