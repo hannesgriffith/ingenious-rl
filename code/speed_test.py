@@ -4,6 +4,7 @@ import pygame as pg
 from pygame.locals import *
 from tqdm import tqdm
 import numpy as np
+import torch
 
 from utils.io import load_json
 from game.gameplay import get_gameplay, Move, get_strategy_types
@@ -13,7 +14,7 @@ from game.player import get_player
 from learn.representation import get_representation
 
 INPUT_SETTINGS = 'settings_speed_test.json'
-N_GAMES = 1000
+N_GAMES = 50
 
 def play_game(gameplay, params):
     board = Board()

@@ -1,19 +1,17 @@
-from numba import njit
+from numba import jitclass, njit, uint8, int32
 import numpy as np
 
 from learn.representation import get_representation
 
-class ReplayBuffer(object):
+class ReplayBuffer:
     def __init__(self, params, work_dir=None):
-        self.temp = float(params["replay_buffer_temp"])
         self.buffer_size = int(params["replay_buffer_size"])
         self.batch_size = min([
             int(params["effective_batch_size"]),
-            int(params["max_batch_size"])
+            int(params["max_train_batch_size"])
         ])
 
         self.buffer = get_representation(params).get_new_reprs_buffer()
-        self.probs = np.ones(self.buffer_size, dtype=np.float32)
 
     def __len__(self):
         return self.buffer.size
@@ -23,23 +21,11 @@ class ReplayBuffer(object):
 
     def add(self, new_reprs):
         self.buffer.combine_reprs(new_reprs)
-        self.probs = np.concatenate((
-            np.ones(new_reprs.size, dtype=np.float32) * np.mean(self.probs),
-            self.probs
-        ))
-
         if self.buffer.size > self.buffer_size:
             self.buffer.clip_to_size(self.buffer_size)
-            self.probs = self.probs[:self.buffer_size]
-
-    def update_probs(self, idxs, diffs):
-        self.probs[idxs] = diffs
 
     def sample_examples(self, num_to_sample):
-        scaled_probs = self.probs ** self.temp
-        probs_norm = (scaled_probs / np.sum(scaled_probs))
-        probs_norm[probs_norm < 0.] = 0.
-        sampled_idxs = np.random.choice(self.buffer_size, size=num_to_sample, replace=False, p=probs_norm)
+        sampled_idxs = np.random.choice(self.buffer_size, size=num_to_sample, replace=False)
         examples, labels = self.buffer.get_examples_by_idxs(sampled_idxs)
         return examples, labels, sampled_idxs
 

@@ -202,6 +202,11 @@ class RepresentationsBuffer():
             deck_repr[i] = deck_repr_example_augmented1
             scores_repr[i] = scores_repr_example_augmented1
 
+        if np.random.randint(0, 2) == 1:
+            board_repr = board_repr[:, ::-1, :, :]
+        if np.random.randint(0, 2) == 1:
+            board_repr = board_repr[:, :, ::-1, :]
+
         return (board_repr, deck_repr, scores_repr, general_repr)
 
     def normalise(self, board_repr, deck_repr, scores_repr, general_repr):

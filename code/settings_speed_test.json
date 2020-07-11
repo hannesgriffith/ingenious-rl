@@ -1,13 +1,17 @@
 {
     "1": {
-        "name": "Mami",
+        "name": "P1",
         "player_type": "computer",
-        "strategy_type": "mixed_4"
+        "strategy_type": "rl",
+        "network_type": "conv_v2_plus",
+        "ckpt_path": "best_ckpts/conv_v2+_best_self_1806_1817.pth"
         },
     "2": {
-        "name": "Papi",
+        "name": "P2",
         "player_type": "computer",
-        "strategy_type": "max"
+        "strategy_type": "rl",
+        "network_type": "conv_v2_plus",
+        "ckpt_path": "best_ckpts/conv_v2+_best_self_1806_1817.pth"
     },
     "game_type": "training",
     "representation": "v1",

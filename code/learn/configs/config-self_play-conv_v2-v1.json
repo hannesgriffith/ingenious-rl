@@ -19,7 +19,7 @@
     "initial_learning_rate": 0.01,
     "total_training_steps": 120000,
     "reduce_lr_every_n_steps": 40000,
-    "replay_buffer_size": 100000,
+    "replay_buffer_size": 2048,
     "replay_buffer_temp": 0.0,
     "weight_decay": 0.0001,
     "explore_limit": 0

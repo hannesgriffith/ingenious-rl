@@ -256,30 +256,22 @@ class MixedStrategy4:
 class RLVanilla:
     def __init__(self, params=None):
         self.model = None
-        self.explore = False
-
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-        # print("Strategy using device:", self.device)
-
-        if params is not None and "explore_limit" in params:
-            self.explore_limit = params["explore_limit"]
-        else:
-            self.explore_limit = 0
 
         if params is not None and "ckpt_path" in params:
             self.model = get_network(params).to(self.device)
-            self.model.load_state_dict(torch.load(params["ckpt_path"], map_location=self.device))
+            self.load_model(params["ckpt_path"])
 
-        if params is not None and "max_batch_size" in params:
-            self.max_batch = params["max_batch_size"]
+        if params is not None and "max_eval_batch_size" in params:
+            self.max_batch = params["max_eval_batch_size"]
         else:
             self.max_batch = 1024
 
-    def set_explore(self, explore):
-        self.explore = explore
-
     def set_model(self, model):
         self.model = model
+
+    def load_model(self, filename):
+        self.model.load_state_dict(torch.load(filename, map_location=self.device))
 
     def prepare_model_inputs(self, r):
         inputs = (r.board_repr, r.deck_repr, r.scores_repr, r.general_repr)
@@ -312,10 +304,10 @@ class RLVanilla:
             return all_values[1:]
 
     def run_model(self, inputs):
-        self.model = self.model.eval()
+        self.model.eval()
         with torch.no_grad():
-            grid_inputs = torch.from_numpy(inputs[0]).to(self.device)
-            vector_inputs = torch.from_numpy(inputs[1]).to(self.device)
+            grid_inputs = torch.tensor(inputs[0], dtype=torch.float32, device=self.device)
+            vector_inputs = torch.tensor(inputs[1], dtype=torch.float32, device=self.device)
             move_values = self.model(grid_inputs, vector_inputs)
             move_values = torch.squeeze(move_values).detach().cpu().numpy()
             move_values = move_values.astype(np.float32)
@@ -332,15 +324,7 @@ class RLVanilla:
         model_inputs = self.prepare_model_inputs(representations)
         move_values = self.predict_values(model_inputs)
 
-        if inference or not self.explore or board.move_num > self.explore_limit:
-            move_idx = np.argmax(move_values)
-        else:
-            num_moves = possible_moves_subset.shape[0]
-            move_values = (move_values - np.min(move_values)) / np.max(move_values - np.min(move_values))
-            probs = move_values / np.sum(move_values)
-            probs[probs < 0.] = 0.
-            move_idx = np.random.choice(num_moves, p=probs)
-
+        move_idx = np.argmax(move_values)
         best_move = possible_moves_subset[move_idx]
         should_exchange = representations.general_repr[move_idx, 3]
         best_move_value = move_values[move_idx]
