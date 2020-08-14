@@ -1,4 +1,4 @@
-from numba import njit, jitclass, uint8, types, int64
+from numba import njit, jitclass, uint8, types, int32, int64
 import numpy as np
 
 # NOTE: Move convention in board: [i1, j1, k1, i2, j2, k2, colour1, colour2]
@@ -27,6 +27,7 @@ board_spec = [
     ('n', uint8),
     ('side', uint8),
     ('move_num', uint8),
+    ('generate_state_2', uint8),
     ('first_move', uint8[:]),
     ('occupied', uint8[:, :, :]),
     ('available', uint8[:, :, :]),
@@ -39,6 +40,7 @@ board_spec = [
     ('c', uint8[:, :, :, :, :]),
     ('s', uint8[:, :, :, :, :]),
     ('state', uint8[:, :, :]),
+    ('state2', uint8[:, :, :]),
     ('conversion', types.DictType(
         types.UniTuple(int64, 3),
         types.UniTuple(int64, 2)
@@ -51,6 +53,7 @@ class Board:
         self.n = 6
         self.side = 11
         self.move_num = 1
+        self.generate_state_2 = 1
 
         self.first_move = np.zeros((6,), dtype=np.uint8)
         self.occupied = np.ones((self.side + 2, self.side + 2, self.side + 2), dtype=np.uint8)
@@ -66,6 +69,7 @@ class Board:
         self.c = np.zeros((3, self.side + 2, self.side + 2, self.side + 2, 6), dtype=np.uint8)
         self.s = np.zeros((3, self.side + 2, self.side + 2, self.side + 2, 6), dtype=np.uint8)
         self.state = np.zeros((self.side, self.side, 8), dtype=np.uint8) # 6 colours, occupied, available
+        self.state2 = np.zeros((self.side, self.side, 6), dtype=np.uint8) # 6 colours
 
         self.conversion = self.get_new_conversion_dict()
 
@@ -76,6 +80,7 @@ class Board:
         self.initialise_available()
         self.initialise_possible_moves()
         self.initialise_state()
+        self.initialise_state2()
         # self.set_possible_tiles()
 
     def get_copy(self):
@@ -192,6 +197,15 @@ class Board:
         self.state = self.update_state_colours_for_hex(self.state, (10, 0, 5), 4)
         self.state = self.update_state_colours_for_hex(self.state, (5, 0, 10), 1)
 
+    def initialise_state2(self):
+        if self.generate_state_2 == 1:
+            self.state2 = self.update_state2_for_hex(self.state2, (5, 10, 0), 0)
+            self.state2 = self.update_state2_for_hex(self.state2, (10, 5, 0), 3)
+            self.state2 = self.update_state2_for_hex(self.state2, (0, 5, 10), 2)
+            self.state2 = self.update_state2_for_hex(self.state2, (0, 10, 5), 5)
+            self.state2 = self.update_state2_for_hex(self.state2, (10, 0, 5), 4)
+            self.state2 = self.update_state2_for_hex(self.state2, (5, 0, 10), 1)
+
     def update_state_colours_for_hex(self, state, coords, colour, padded=False):
         i1, j1, k1 = coords
         if padded:
@@ -227,6 +241,38 @@ class Board:
         state = self.update_state_colours_for_hex(state, (i1, j1, k1), c1, padded=padded)
         state = self.update_state_colours_for_hex(state, (i2, j2, k2), c2, padded=padded)
         return state
+
+    def update_state2_for_hex(self, state2, coords, colour):
+        i1, j1, k1 = coords
+        i2, j2 = self._3d_to_2d_r1(i1, j1, k1)
+        state2[i2, j2, :] = 0
+
+        coords = np.array(coords, dtype=np.uint8)
+        coords_padded = coords + np.ones_like(coords)
+        i3, j3, k3 = coords_padded.flatten()
+
+        for offset_idx in range(self.f.shape[0]):
+            di, dj, dk = self.f[offset_idx]
+
+            coords_offset = (i3 + di - 1, j3 + dj - 1, k3 + dk - 1)
+            coords_offset_minus = (i3 + di - 2, j3 + dj - 2, k3 + dk - 2)
+            available = self.available[coords_offset[0], coords_offset[1], coords_offset[2]] == 1
+
+            if available:
+                score = np.sum(self.calculate_hex_score(np.array(coords_offset_minus, dtype=np.uint8), colour, self.s))
+                i4, j4 = self._3d_to_2d_r1(coords_offset_minus[0], coords_offset_minus[1], coords_offset_minus[2])
+                state2[i4, j4, colour] = score
+            elif coords_offset_minus[0] >= 0 and coords_offset_minus[1] >= 0 and coords_offset_minus[2] >= 0:
+                i4, j4 = self._3d_to_2d_r1(coords_offset_minus[0], coords_offset_minus[1], coords_offset_minus[2])
+                state2[i4, j4, :] = 0
+
+        return state2
+
+    def update_state2_for_move(self, state2, move):
+        i1, j1, k1, i2, j2, k2, c1, c2 = move.flatten()
+        state2 = self.update_state2_for_hex(state2, (i1, j1, k1), c1)
+        state2 = self.update_state2_for_hex(state2, (i2, j2, k2), c2)
+        return state2
 
     def where_idxs_3d(self, array):
         idxs_tuple = np.where(array)
@@ -393,6 +439,8 @@ class Board:
         self.c, self.s = self.get_updated_scoring_clusters(move, self.c, self.s)
         self.possible_moves = self.get_updated_possible_moves(self.possible_moves, self.move_num, move)
         self.state = self.update_state_for_move(self.state, move)
+        if self.generate_state_2 == 1:
+            self.state2 = self.update_state2_for_move(self.state2, move)
         self.move_num += 1
 
     def first_move_update(self, move, possible_moves):
@@ -510,6 +558,12 @@ class Board:
     def get_state_copy(self):
         return np.copy(self.get_state())
 
+    def get_state2(self):
+        return self.state2
+
+    def get_state2_copy(self):
+        return np.copy(self.get_state2())
+
     def get_all_possible_moves(self):
         return self.possible_moves.astype(np.uint8)
 
@@ -539,7 +593,7 @@ class Board:
         connected_hexes = connected_hexes[1:, :]
         return connected_hexes
 
-    def calculate_hex_score(self, coords, c):
+    def calculate_hex_score(self, coords, c, s):
         padded_coords = coords + np.ones_like(coords)
         i, j, k = padded_coords.flatten()
         colour_sum = 0
@@ -547,7 +601,7 @@ class Board:
         for direction_idx in range(self.k.shape[0]):
             for offset_idx in range(self.k.shape[1]):
                 di, dj, dk = self.k[direction_idx, offset_idx, :]
-                colour_sum += self.s[direction_idx, i + di - 1, j + dj - 1, k + dk - 1, c]
+                colour_sum += s[direction_idx, i + di - 1, j + dj - 1, k + dk - 1, c]
 
         move_score = np.zeros((6,), dtype=np.uint8)
         move_score[c] = colour_sum
@@ -555,8 +609,8 @@ class Board:
 
     def calculate_move_score(self, move):
         move = move.flatten()
-        move_score_1 = self.calculate_hex_score(move[0:3], int(move[6]))
-        move_score_2 = self.calculate_hex_score(move[3:6], int(move[7]))
+        move_score_1 = self.calculate_hex_score(move[0:3], int(move[6]), self.s)
+        move_score_2 = self.calculate_hex_score(move[3:6], int(move[7]), self.s)
         return move_score_1 + move_score_2
 
     def batch_calculate_move_scores(self, moves):
@@ -610,11 +664,188 @@ class Board:
 
         return updated_states
 
+    # def batch_get_updated_states2(self, possible_moves, next_availables, possible_cluster_sizes):
+    #     batch_size = possible_moves.shape[0]
+    #     updated_states2 = np.zeros((batch_size, 11, 11, 6))
+
+    #     for idx in range(batch_size):
+    #         move = possible_moves[idx]
+    #         next_available = next_availables[idx]
+    #         next_cluster_sizes = possible_cluster_sizes[idx]
+
+    #         updated_states2[idx] = self.state2
+
+    #         for coords in [move[0:3], move[3:6]]:
+    #             i1, j1, k1 = coords
+    #             i2, j2 = self._3d_to_2d_r1(i1, j1, k1)
+    #             updated_states2[idx, i2, j2, :] = 0
+
+    #             coords = coords.astype(np.uint8)
+    #             coords_padded = coords + np.ones_like(coords)
+    #             i3, j3, k3 = coords_padded.flatten()
+
+    #             for offset_idx in range(self.f.shape[0]):
+    #                 di, dj, dk = self.f[offset_idx]
+
+    #                 coords_offset = (i3 + di - 1, j3 + dj - 1, k3 + dk - 1)
+    #                 coords_offset_minus = (i3 + di - 2, j3 + dj - 2, k3 + dk - 2)
+    #                 is_available = next_available[coords_offset[0], coords_offset[1], coords_offset[2]] == 1
+
+    #                 if not is_available:
+    #                     i4, j4 = self._3d_to_2d_r1(coords_offset_minus[0], coords_offset_minus[1], coords_offset_minus[2])
+    #                     updated_states2[idx, i4, j4, :] = 0
+
+    #         available_idxs = self.where_idxs_3d(next_available == 1)
+
+    #         for c in [move[6], move[7]]:
+    #             updated_states2[idx, :, :, c] = np.zeros_like(updated_states2[idx, :, :, c])
+
+    #             for coord_idx in range(available_idxs.shape[0]):
+    #                 i1, j1, k1 = available_idxs[coord_idx]
+
+    #                 score = 0
+    #                 for direction_idx in range(self.k.shape[0]):
+    #                     for offset_idx in range(self.k.shape[1]):
+    #                         di, dj, dk = self.k[direction_idx, offset_idx, :]
+    #                         score += next_cluster_sizes[direction_idx, i1 + di - 1, j1 + dj - 1, k1 + dk - 1, c]
+
+    #                 i2, j2 = self._3d_to_2d_r1(i1 - 1, j1 - 1, k1 - 1)
+    #                 updated_states2[idx, i2, j2, c] = score
+
+    #     return updated_states2
+
+    def batch_get_updated_states2(self, possible_moves, next_availables, possible_cluster_sizes):
+        batch_size = possible_moves.shape[0]
+        updated_states2 = np.zeros((batch_size, 11, 11, 6))
+
+        for idx in range(batch_size):
+            next_available = next_availables[idx]
+            next_cluster_sizes = possible_cluster_sizes[idx]
+
+            available_idxs = self.where_idxs_3d(next_available == 1)
+            for c in range(6):
+                for coord_idx in range(available_idxs.shape[0]):
+                    i1, j1, k1 = available_idxs[coord_idx]
+
+                    score = 0
+                    for direction_idx in range(self.k.shape[0]):
+                        for offset_idx in range(self.k.shape[1]):
+                            di, dj, dk = self.k[direction_idx, offset_idx, :]
+                            score += next_cluster_sizes[direction_idx, i1 + di - 1, j1 + dj - 1, k1 + dk - 1, c]
+
+                    i2, j2 = self._3d_to_2d_r1(i1 - 1, j1 - 1, k1 - 1)
+                    updated_states2[idx, i2, j2, c] = score
+
+        return updated_states2
+
+    def batch_get_updated_available(self, possible_moves, available_start, occupied_start):
+        b = possible_moves.shape[0]
+        batch_available = np.zeros((b, self.side + 2, self.side + 2, self.side + 2), dtype=np.uint8)
+
+        for idx in range(b):
+            move = possible_moves[idx]
+            batch_available[idx] = available_start
+
+            occupied = np.copy(occupied_start)
+            available = batch_available[idx]
+
+            # First update occupied
+            padded_move = move + np.ones_like(move)
+            occupied[padded_move[0], padded_move[1], padded_move[2]] = 1
+            occupied[padded_move[3], padded_move[4], padded_move[5]] = 1
+
+            # Now update available
+            for single_hex_coords in (move[0:3], move[3:6]):
+                single_hex_coords_padded = single_hex_coords + np.ones_like(single_hex_coords)
+                i, j, k = single_hex_coords_padded.flatten()
+                available[i, j, k] = 0
+
+                for offset_idx_1 in range(self.f.shape[0]):
+                    di1, dj1, dk1 = self.f[offset_idx_1]
+                    occupied_1 = (occupied[i + di1 - 1, j + dj1 - 1, k + dk1 - 1] == 1)
+                    if not occupied_1:
+                        all_neighbours_occupied = True
+                        for offset_idx_2 in range(self.f.shape[0]):
+                            di2, dj2, dk2 = self.f[offset_idx_2]
+                            occupied_2 = (occupied[i + di1 + di2 - 2, j + dj1 + dj2 - 2, k + dk1 + dk2 - 2] == 1)
+                            if not occupied_2:
+                                all_neighbours_occupied = False
+                                break
+
+                        if all_neighbours_occupied:
+                            available[i + di1 - 1, j + dj1 - 1, k + dk1 - 1] = 0
+                            occupied[i + di1 - 1, j + dj1 - 1, k + dk1 - 1] = 1
+                        else:
+                            available[i + di1 - 1, j + dj1 - 1, k + dk1 - 1] = 1
+
+                    else:
+                        available[i + di1 - 1, j + dj1 - 1, k + dk1 - 1] = 0
+
+                available[i, j, k] = 0
+
+            batch_available[idx] = available 
+
+        return batch_available
+
+    def batch_get_updated_scoring_clusters(self, moves, c_start, s_start):
+        b = moves.shape[0]
+        batch_c = np.zeros((b, 3, self.side + 2, self.side + 2, self.side + 2, 6), dtype=np.uint8)
+        batch_s = np.zeros((b, 3, self.side + 2, self.side + 2, self.side + 2, 6), dtype=np.uint8)
+
+        for idx in range(b):
+            move = moves[idx]
+            batch_c[idx], batch_s[idx] = c_start, s_start
+            c, s = batch_c[idx], batch_s[idx]
+
+            for coords, col in [(move[0:3], int(move[6])), (move[3:6], int(move[7]))]:
+                padded_coords = coords + np.ones_like(coords)
+                i, j, k = padded_coords.flatten()
+
+                for d in range(self.k.shape[0]):
+                    di1, dj1, dk1 = self.k[d, 0, :]
+                    di2, dj2, dk2 = self.k[d, 1, :]
+                    cluster_1 = c[d, i + di1 - 1, j + dj1 - 1, k + dk1 - 1, col]
+                    cluster_2 = c[d, i + di2 - 1, j + dj2 - 1, k + dk2 - 1, col]
+
+                    if cluster_1 == 0 and cluster_2 == 0:
+                        new_cluster_number = np.max(c) + 1
+                        c[d, i, j, k, col] = new_cluster_number
+                        s[d, i, j, k, col] = 1
+
+                    elif cluster_1 != 0 and cluster_2 != 0:
+                        if cluster_1 < cluster_2:
+                            new_cluster_number = cluster_1
+                            other_cluster_number = cluster_2
+                        else:
+                            new_cluster_number = cluster_2
+                            other_cluster_number = cluster_1
+
+                        c[d, i, j, k, col] = new_cluster_number
+                        c[d, :, :, :, col] = self.update_where(c[d, :, :, :, col], other_cluster_number, new_cluster_number)
+                        new_cluster_size = np.sum(c[d, :, :, :, col] == new_cluster_number)
+                        s[d, :, :, :, col] = self.mask_update(c[d, :, :, :, col], new_cluster_number, s[d, :, :, :, col], new_cluster_size)
+
+                    else:
+                        if cluster_1 != 0:
+                            new_cluster_number = cluster_1
+                        else:
+                            new_cluster_number = cluster_2
+                        c[d, i, j, k, col] = new_cluster_number
+                        new_cluster_size = np.sum(c[d, :, :, :, col] == new_cluster_number)
+                        s[d, :, :, :, col] = self.mask_update(c[d, :, :, :, col], new_cluster_number, s[d, :, :, :, col], new_cluster_size)
+
+            batch_c[idx], batch_s[idx] = c, s
+
+        return batch_s
+
     def _3d_to_2d_r1(self, i1, j1, k1):
         tuple_3d = (i1, j1, k1)
-        tuple_2d = self.conversion[tuple_3d]
-        i2, j2 = tuple_2d
-        return i2, j2
+        if tuple_3d in self.conversion:
+            tuple_2d = self.conversion[tuple_3d]
+            i2, j2 = tuple_2d
+            return i2, j2
+        else:
+            return 0, 0
 
     def get_new_conversion_dict(self):
         return {

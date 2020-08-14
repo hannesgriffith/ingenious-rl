@@ -10,6 +10,8 @@ def get_network(params):
         return MLPV1()
     elif params["network_type"] == "mlp_v2":
         return MLPV2()
+    elif params["network_type"] == "mlp_v3":
+        return MLPV3()
     elif params["network_type"] == "mlp2_only":
         return MLP2Only()
     elif params["network_type"] == "conv_v1":
@@ -22,6 +24,8 @@ def get_network(params):
         return ConvV3()
     elif params["network_type"] == "conv_v4":
         return ConvV4()
+    elif params["network_type"] == "conv_v5":
+        return ConvV5()
     else:
         raise ValueError("Incorrect network name.")
 
@@ -29,6 +33,9 @@ def num_input_channels():
     g = 10  # num grid input channels
     v = 29  # num vector input channels
     return g, v
+
+def num_input_channels_v2():
+    return None, 86  # num vector input channels
 
 def mlp2(in_channels, h_channels, out_channels, p=0.5):
     return nn.Sequential(
@@ -157,7 +164,7 @@ def get_hexagonal_kernel_mask():
                 [0., 1., 0., 1., 0.],
                 [1., 0., 1., 0., 1.],
                 [0., 1., 0., 1., 0.],
-            ], dtype=torch.float32, requires_grad=False).view(1, 1, 3, 5)
+            ], dtype=torch.float16, requires_grad=False).view(1, 1, 3, 5)
 
 def get_hexagonal_activations_mask():
     return torch.tensor([
@@ -172,7 +179,7 @@ def get_hexagonal_activations_mask():
                 [0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0, 0,],
                 [0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0, 0, 0,],
                 [0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0, 0, 0, 0,]
-            ], dtype=torch.float32, requires_grad=False).view(1, 1, 11, 21)
+            ], dtype=torch.float16, requires_grad=False).view(1, 1, 11, 21)
 
 class Hexagonal3x3Conv2d(nn.Conv2d):
     def __init__(self, in_channels, out_channels, mask=None):
@@ -282,7 +289,7 @@ class HexagonalDepthwise3x3Conv2d(nn.Conv2d):
 class HexagonalSEBlock(nn.Module):
     def __init__(self, hidden_units, activations_mask):
         super().__init__()
-        self.squeeze_ratio = 16
+        self.squeeze_ratio = 8
         self.hidden_units = hidden_units
         self.activations_mask = activations_mask
 
@@ -322,8 +329,8 @@ class ConvV3(nn.Module):
     def __init__(self):
         super().__init__()
         self.g, self.v = num_input_channels()
-        self.num_blocks = 8
-        self.num_hidden_units = 48
+        self.num_blocks = 4
+        self.num_hidden_units = 32
 
         self.activations_mask = get_hexagonal_activations_mask()
         self.activations_mask = self.activations_mask.to(torch.device("cuda:0" if torch.cuda.is_available() else "cpu"))
@@ -364,46 +371,158 @@ class ConvV3(nn.Module):
         x = self.tanh(x)
         return x
 
-class SeparableConv(nn.Module):
-    def __init__(self, hidden_channels):
+class HexagonalSeparableConv(nn.Module):
+    def __init__(self, hidden_channels, kernel_mask):
         super().__init__()
-        self.conv_depthwise = nn.Conv2d(hidden_channels, hidden_channels, (3, 5), padding=(1, 2), groups=hidden_channels, bias=True)
+        self.conv_depthwise = HexagonalDepthwise3x3Conv2d(hidden_channels, kernel_mask)
         self.conv_pointwise = nn.Conv2d(hidden_channels, hidden_channels, 1, padding=0, bias=True)
 
     def forward(self, x_in):
-        return self.conv_pointwise(swish(self.conv_depthwise(x_in)))
+        x = swish(self.conv_depthwise(x_in))
+        x = self.conv_pointwise(x)
+        return x
 
-class Block(nn.Module):
-    def __init__(self, hidden_channels):
+class HexagonalSeparableBlock(nn.Module):
+    def __init__(self, hidden_channels, activations_mask, kernel_mask):
         super().__init__()
-        # self.conv_1 = nn.Conv2d(hidden_channels, hidden_channels, (3, 5), padding=(1, 2), bias=True)
-        # self.conv_2 = nn.Conv2d(hidden_channels, hidden_channels, (3, 5), padding=(1, 2), bias=True)
-        self.conv_1 = SeparableConv(hidden_channels)
-        self.conv_2 = SeparableConv(hidden_channels)
+        self.activations_mask = activations_mask
+        self.conv_1 = HexagonalSeparableConv(hidden_channels, kernel_mask)
+        self.conv_2 = HexagonalSeparableConv(hidden_channels, kernel_mask)
 
     def forward(self, x_in):
-        x = swish(self.conv_1(x_in))
-        x = self.conv_2(x) + x_in
+        x = swish(self.conv_1(x_in)) * self.activations_mask
+        x = swish(self.conv_2(x) + x_in) * self.activations_mask
         return x
 
 class ConvV4(nn.Module):
     def __init__(self):
         super().__init__()
         self.g, self.v = num_input_channels()
-        self.num_blocks = 8
+        self.num_blocks = 4
         self.num_hidden_units = 64
 
+        self.activations_mask = get_hexagonal_activations_mask()
+        self.activations_mask = self.activations_mask.to(torch.device("cuda:0" if torch.cuda.is_available() else "cpu"))
+
+        self.kernel_mask = get_hexagonal_kernel_mask()
+        self.kernel_mask = self.kernel_mask.to(torch.device("cuda:0" if torch.cuda.is_available() else "cpu"))
+
         self.combine_inputs = CombineInputs(self.v)
-        self.conv_in = nn.Conv2d(self.g + self.v, self.num_hidden_units, kernel_size=1)
-        self.res_stack = nn.Sequential(*[Block(self.num_hidden_units) for _ in range(self.num_blocks)])
+        self.conv_in = Hexagonal3x3Conv2d(self.g + self.v, self.num_hidden_units, mask=self.kernel_mask)
+
+        self.res_stack = nn.Sequential(*[
+            HexagonalSeparableBlock(
+                self.num_hidden_units,
+                self.activations_mask,
+                self.kernel_mask
+                ) for _ in range(self.num_blocks)
+            ])
+
+        self.avg_pool = hexagonal_2d_global_avg_pool
         self.max_pool = nn.MaxPool2d((11, 21), stride=1, padding=0)
-        self.avg_pool = nn.AvgPool2d((11, 21), stride=1, padding=0)
         self.fc_out = nn.Linear(2 * self.num_hidden_units, 1, bias=True)
         self.tanh = nn.Tanh()
 
     def forward(self, x_grid, x_vector):
-        x = swish(self.conv_in(self.combine_inputs(x_grid, x_vector)))
-        x = self.res_stack(x)
-        x = torch.cat([self.max_pool(x), self.avg_pool(x)], dim=1)
-        x = self.tanh(self.fc_out(x.squeeze()))
+        x_in = self.combine_inputs(x_grid, x_vector) * self.activations_mask
+        x = swish(self.conv_in(x_in)) * self.activations_mask
+        x = self.res_stack(x) * self.activations_mask
+
+        x_max = self.max_pool(x)
+        x_avg = self.avg_pool(x, self.activations_mask)
+        x = torch.cat((x_avg, x_max), dim=1).squeeze()
+
+        x = self.fc_out(x)
+        x = self.tanh(x)
         return x
+
+class Hexagonal3x3Conv2dNoBias(nn.Conv2d):
+    def __init__(self, in_channels, out_channels, kernel_mask):
+        super().__init__(in_channels, out_channels, (3, 5), stride=1, padding=(1, 2), bias=False)
+        self.kernel_mask = self.kernel_mask.to(torch.device("cuda:0" if torch.cuda.is_available() else "cpu"))
+
+    def forward(self, x_in):
+        return F.conv2d(x_in, self.weight * self.kernel_mask, bias=None, stride=1, padding=(1, 2))
+
+class HexagonalBlock(nn.Module):
+    def __init__(self, hidden_channels, activations_mask, kernel_mask):
+        super().__init__()
+        self.activations_mask = activations_mask
+        self.conv_1 = Hexagonal3x3Conv2dNoBias(hidden_channels, hidden_channels, kernel_mask)
+        self.conv_2 = Hexagonal3x3Conv2dNoBias(hidden_channels, hidden_channels, kernel_mask)
+        self.bn_1 = nn.BatchNorm2d(out_channels, affine=True)
+        self.bn_2 = nn.BatchNorm2d(out_channels, affine=True)
+
+    def forward(self, x_in):
+        x = swish(self.bn_1(self.conv_1(x_in))) * self.activations_mask
+        x = swish(self.bn_2(self.conv_2(x)) + x_in) * self.activations_mask
+        return x
+
+class ConvV5(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.g, self.v = num_input_channels()
+        self.num_blocks = 19
+        self.num_hidden_units = 32
+
+        self.activations_mask = get_hexagonal_activations_mask()
+        self.activations_mask = self.activations_mask.to(torch.device("cuda:0" if torch.cuda.is_available() else "cpu"))
+
+        self.kernel_mask = get_hexagonal_kernel_mask()
+        self.kernel_mask = self.kernel_mask.to(torch.device("cuda:0" if torch.cuda.is_available() else "cpu"))
+
+        self.combine_inputs = CombineInputs(self.v)
+        self.conv_in = Hexagonal3x3Conv2dNoBias(self.g + self.v, self.num_hidden_units, self.kernel_mask)
+        self.bn_in = nn.BatchNorm2d(self.num_hidden_units, affine=True)
+
+        self.res_stack = nn.Sequential(*[
+            HexagonalBlock(
+                self.num_hidden_units,
+                self.activations_mask,
+                self.kernel_mask
+                ) for _ in range(self.num_blocks)
+            ])
+
+        self.avg_pool = hexagonal_2d_global_avg_pool
+        self.max_pool = nn.MaxPool2d((11, 21), stride=1, padding=0)
+        self.fc_out = nn.Linear(2 * self.num_hidden_units, 1, bias=True)
+        self.tanh = nn.Tanh()
+
+    def forward(self, x_grid, x_vector):
+        x_in = self.combine_inputs(x_grid, x_vector) * self.activations_mask
+        x = swish(self.bn_in(self.conv_in(x_in))) * self.activations_mask
+        x = self.res_stack(x) * self.activations_mask
+
+        x_max = self.max_pool(x)
+        x_avg = self.avg_pool(x, self.activations_mask)
+        x = torch.cat((x_avg, x_max), dim=1).squeeze()
+
+        x = self.fc_out(x)
+        x = self.tanh(x)
+        return x
+
+class Swish(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, x):
+        return x * torch.sigmoid(x)
+
+class MLPV3(nn.Module):
+    def __init__(self):
+        super().__init__()
+        _, self.v = num_input_channels_v2()
+        self.h = 64
+
+        self.mlp = nn.Sequential(
+            nn.Linear(self.v, self.h),
+            Swish(),
+            nn.Linear(self.h, self.h),
+            Swish(),
+            nn.Linear(self.h, 1),
+            nn.Tanh()
+        )
+
+    def forward(self, _, x_vector):
+        # print(x_vector[0, :-8].view(-1, 6))
+        return self.mlp(x_vector)

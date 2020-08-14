@@ -27,6 +27,12 @@ from learn.visualisation import generate_debug_visualisation
 def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
+def set_model_to_half(model):
+    model.half()
+    for layer in model.modules():
+        if isinstance(layer, nn.BatchNorm2d):
+            layer.float()
+
 class Params(object): 
     def __init__(self, d):
         self.__dict__ = d
@@ -58,14 +64,16 @@ class SelfPlayTrainingSession:
         if self.p.restore_ckpt_dir is not None:
             self.load_training_state(self.p.restore_ckpt_dir)
         else:
-            self.best_self_model_step = 0
-            self.best_rule_model_step = 0
             self.steps_since_improvement = 0
+
+        self.best_self_model_step = 0
+        self.best_rule_model_step = 0
 
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         self.net = self.get_new_network()
         print("Training using device:", self.device)
 
+        # self.p.initial_learning_rate = 0.1
         self.optimizer = optim.SGD(
             self.net.parameters(),
             lr=self.p.initial_learning_rate,
@@ -75,7 +83,7 @@ class SelfPlayTrainingSession:
         self.loss_criterion = nn.MSELoss(reduction='mean')
 
         self.scheduler = optim.lr_scheduler.StepLR(self.optimizer, 1, gamma=0.1)
-        self.lr_tracker = self.p.initial_learning_rate
+        # self.scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(self.optimizer, 2500)
 
         if self.p.effective_batch_size % self.p.max_train_batch_size == 0:
             self.accumulate_loss_n_times = self.p.effective_batch_size // self.p.max_train_batch_size
@@ -83,10 +91,13 @@ class SelfPlayTrainingSession:
             self.accumulate_loss_n_times = self.p.effective_batch_size // self.p.max_train_batch_size + 1
 
         self.strategy_types = ["random", "max", "increase_min", "reduce_deficit", "mixed_4"]
+        # self.strategy_types = ["random", "max", "increase_min", "reduce_deficit"]
         self.writer = SummaryWriter(os.path.join(self.logs_dir, "tensorboard"))
 
     def get_new_network(self):
-        return get_network(self.config).to(self.device)
+        net = get_network(self.config).to(self.device)
+        set_model_to_half(net)
+        return net
 
     def save_model(self, filename):
         self.net.train()
@@ -94,6 +105,7 @@ class SelfPlayTrainingSession:
     
     def load_model(self, filename):
         self.net.load_state_dict(torch.load(filename, map_location=self.device))
+        set_model_to_half(self.net)
 
     def save_optimiser(self):
         torch.save(self.optimizer.state_dict(), os.path.join(self.logs_dir, "optimiser_state.pth"))
@@ -107,7 +119,7 @@ class SelfPlayTrainingSession:
             "steps_since_improvement": self.steps_since_improvement,
             "best_self_model_step": self.best_self_model_step,
             "best_rule_model_step": self.best_rule_model_step,
-            "learning_rate": self.lr_tracker,
+            "learning_rate": self.optimizer.param_groups[0]['lr'],
         }
         write_json(os.path.join(self.logs_dir, "training_state.json"), state)
 
@@ -116,7 +128,7 @@ class SelfPlayTrainingSession:
         self.steps_since_improvement = state["steps_since_improvement"]
         self.best_self_model_step = state["best_self_model_step"]
         self.best_rule_model_step = state["best_rule_model_step"]
-        self.p.initial_learning_rate = state["learning_rate"]
+        # self.p.initial_learning_rate = state["learning_rate"]
 
     def log_network_weights_hists(self, step):
         for name, params in self.net.named_parameters():
@@ -140,21 +152,29 @@ class SelfPlayTrainingSession:
 
     def apply_learning_update(self):
         self.optimizer.zero_grad()
+        loss_invalid = True
 
-        for _ in range(self.accumulate_loss_n_times):
-            inputs, labels, vis_inputs, idxs = self.replay_buffer.sample_training_minibatch()
+        while loss_invalid:
+            for _ in range(self.accumulate_loss_n_times):
+                loss_invalid = False
+                inputs, labels, vis_inputs, idxs = self.replay_buffer.sample_training_minibatch()
 
-            grid_input_device = torch.tensor(inputs[0], dtype=torch.float32, device=self.device)
-            vector_input_device = torch.tensor(inputs[1], dtype=torch.float32, device=self.device)
+                grid_input_device = torch.tensor(inputs[0], dtype=torch.float16, device=self.device)
+                vector_input_device = torch.tensor(inputs[1], dtype=torch.float16, device=self.device)
 
-            labels[labels == 0] = -1
-            labels_device = torch.tensor(labels, dtype=torch.float32, device=self.device)
+                labels[labels == 0] = -1
+                labels_device = torch.tensor(labels, dtype=torch.float16, device=self.device)
 
-            predictions = self.net(grid_input_device, vector_input_device)
+                predictions = self.net(grid_input_device, vector_input_device)
 
-            loss = self.loss_criterion(torch.squeeze(predictions), torch.squeeze(labels_device))
-            normalised_loss = loss / float(self.accumulate_loss_n_times)
-            normalised_loss.backward()
+                loss = self.loss_criterion(torch.squeeze(predictions), torch.squeeze(labels_device))
+
+                if not torch.isnan(loss) and not torch.isinf(loss):
+                    normalised_loss = loss / float(self.accumulate_loss_n_times)
+                    normalised_loss.backward()
+                else:
+                    print("\n\nInvalid loss encountered!\n\n")
+                    loss_invalid = True
 
         self.optimizer.step()
 
@@ -211,8 +231,8 @@ class SelfPlayTrainingSession:
 
     def add_graph_to_logs(self):
         inputs, _, _, _ = self.replay_buffer.sample_training_minibatch()
-        grid_input_device = torch.tensor(inputs[0], dtype=torch.float32, device=self.device)
-        vector_input_device = torch.tensor(inputs[1], dtype=torch.float32, device=self.device)
+        grid_input_device = torch.tensor(inputs[0], dtype=torch.float16, device=self.device)
+        vector_input_device = torch.tensor(inputs[1], dtype=torch.float16, device=self.device)
         self.writer.add_graph(self.net, (grid_input_device, vector_input_device))
 
     def train(self):
@@ -271,21 +291,22 @@ class SelfPlayTrainingSession:
                 mean_abs_error = running_error / float(self.p.log_every_n_steps)
                 running_loss, running_error = 0.0, 0.0
 
-                self.writer.add_scalar('metrics/base_lr', self.lr_tracker, i)
+                self.writer.add_scalar('metrics/learning_rate', self.optimizer.param_groups[0]['lr'], i)
                 self.writer.add_scalar('metrics/steps_since_improvement', self.steps_since_improvement, i)
                 self.writer.add_scalar('metrics/train_loss', avg_running_loss, i)
                 self.writer.add_scalar('metrics/train_error', mean_abs_error, i)
                 self.log_network_weights_hists(i)
 
-            if i > 0 and i % int(self.p.vis_every_n_steps) == 0:
+            if i % int(self.p.vis_every_n_steps) == 0:
                 vis_figs = generate_debug_visualisation(vis_inputs)
                 self.writer.add_figure('examples', vis_figs, global_step=i)
 
-            if i > 0 and self.steps_since_improvement >= int(self.p.reduce_lr_threshold):
+            if i > 0 and self.steps_since_improvement >= int(self.p.reduce_lr_step_threshold):
                 print("Reducing learning rate")
                 self.steps_since_improvement = 0
-                self.lr_tracker *= 0.1
                 self.scheduler.step()
+
+            # self.scheduler.step()
 
             if i % int(self.p.test_every_n_steps) == 0:
                 self.save_model(self.latest_ckpt_path)
@@ -294,7 +315,7 @@ class SelfPlayTrainingSession:
                 self.save_optimiser()
 
                 print(f"Playing {self.p.n_test_games} test games against self")
-                self_win_rate, _, _ = self.play_n_test_games(self.test_player, self.training_p1, self.p.n_test_games, learn=True)
+                self_win_rate, _, _ = self.play_n_test_games(self.test_player, self.training_p1, self.p.n_test_games, learn=False)
                 self.writer.add_scalar('win_rates/rl', self_win_rate, i)
                 print("Win rate: {:.2f}".format(self_win_rate))
 
@@ -311,12 +332,12 @@ class SelfPlayTrainingSession:
                 win_rate_rule = 0.0
                 for strat in self.strategy_types:
                     print(f"Playing {self.p.n_other_games} test games against {strat}")
-                    win_rate, _, _ = self.play_n_test_games(self.test_player, self.players[strat], self.p.n_other_games, learn=True)
+                    win_rate, _, _ = self.play_n_test_games(self.test_player, self.players[strat], self.p.n_other_games, learn=False)
                     self.writer.add_scalar(f'win_rates/{strat}', win_rate, i)
                     print("Win rate: {:.2f}".format(win_rate))
                     win_rate_rule += win_rate
 
-                if win_rate_rule > best_win_rate_rule:
+                if win_rate_rule >= best_win_rate_rule:
                     best_win_rate_rule = win_rate_rule
                     print("Best rule model improved!")
                     copyfile(self.latest_ckpt_path, self.best_rule_ckpt_path)

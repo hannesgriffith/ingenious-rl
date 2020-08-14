@@ -1,5 +1,6 @@
 from numba import jitclass, njit, uint8, int32
 import numpy as np
+from torch import dtype
 
 from game.player import batch_peek_can_exchange_tiles
 
@@ -7,6 +8,8 @@ def get_representation(params):
     type_ = params["representation"]
     if type_ == "v1":
         return RepresentationGenerator()
+    elif type_ == "v2":
+        return RepresentationGeneratorV2()
     else:
         raise ValueError("Incorrect representation name.")
 
@@ -202,11 +205,6 @@ class RepresentationsBuffer():
             deck_repr[i] = deck_repr_example_augmented1
             scores_repr[i] = scores_repr_example_augmented1
 
-        if np.random.randint(0, 2) == 1:
-            board_repr = board_repr[:, ::-1, :, :]
-        if np.random.randint(0, 2) == 1:
-            board_repr = board_repr[:, :, ::-1, :]
-
         return (board_repr, deck_repr, scores_repr, general_repr)
 
     def normalise(self, board_repr, deck_repr, scores_repr, general_repr):
@@ -228,11 +226,17 @@ class RepresentationsBuffer():
         scores_repr_flat = scores_repr.reshape(b, -1)
         general_repr_flat = general_repr
         vector_input = np.hstack((deck_repr_flat, scores_repr_flat, general_repr_flat))
-        
+
         grid_input_offset = self.offset_grid(board_repr)
         extra_feature_channels = self.get_extra_grid_feature_channels(grid_input_offset.shape[0])
         grid_input_combined = self.concat_channels(grid_input_offset, extra_feature_channels)
         grid_input_offset = np.transpose(grid_input_combined, (0, 3, 1, 2)) # NHWC -> NCHW
+
+        if np.random.randint(0, 2) == 1:
+            grid_input_offset = grid_input_offset[:, :, ::-1, :]
+        if np.random.randint(0, 2) == 1:
+            grid_input_offset = grid_input_offset[:, :, :, ::-1]
+        grid_input_offset = np.copy(grid_input_offset)
 
         return (grid_input_offset, vector_input)
 
@@ -309,4 +313,323 @@ class RepresentationsBuffer():
             [0, 0, 0, 1, 0, 2, 0, 3, 0, 3, 0, 3, 0, 3, 0, 2, 0, 1, 0, 0, 0,],
             [0, 0, 0, 0, 1, 0, 2, 0, 2, 0, 2, 0, 2, 0, 2, 0, 1, 0, 0, 0, 0,],
             [0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0, 0, 0, 0,]
-            ], dtype=np.uint8).reshape(1, 11, 21, 1) / 6. # normalise
+            ], dtype=np.float32).reshape(1, 11, 21, 1) / 6. # normalise
+
+@njit
+def make_state_repr(state, state2):
+    top_k = 4
+    out = np.zeros((4 + top_k, 6), dtype=np.uint8)
+
+    for c in range(6):
+        out[0, c] = np.sum(state[:, :, c])
+
+        colour_channel2 = state2[:, :, c]
+        out[1, c] = np.sum(colour_channel2 > 0)
+        out[2, c] = np.sum(colour_channel2)
+        out[3, c] = int(np.sum(colour_channel2) == 0)
+
+        colour_channel2_flat = colour_channel2.flatten()
+        colour_channel2_flat.sort()
+        for k in range(top_k):
+            out[4 + k, c] = colour_channel2_flat[-1 - k]
+
+    return out.astype(np.uint8)
+
+@njit
+def batch_make_state_repr(state, state2):
+    top_k = 4
+    b = state.shape[0]
+    out = np.zeros((b, 4 + top_k, 6))
+
+    for i in range(b):
+        for c in range(6):
+            out[i, 0, c] = np.sum(state[i, :, :, c])
+
+            colour_channel2 = state2[i, :, :, c]
+            out[i, 1, c] = np.sum(colour_channel2 > 0)
+            out[i, 2, c] = np.sum(colour_channel2)
+            out[i, 3, c] = int(np.sum(colour_channel2) == 0)
+
+            colour_channel2_flat = colour_channel2.flatten()
+            colour_channel2_flat.sort()
+            for k in range(top_k):
+                out[i, 4 + k, c] = colour_channel2_flat[-1 - k]
+
+    return out
+
+@njit
+def batch_get_unoccuvailable(board_repr1):
+    b = board_repr1.shape[0]
+    board_repr1 = board_repr1.astype(np.uint8)
+    unoccupied = np.zeros(b, dtype=np.uint8)
+    available = np.zeros(b, dtype=np.uint8)
+
+    for i in range(b):
+        unoccupied[i] = 121 - np.sum(board_repr1[i, :, :, 6])
+        available[i] = np.sum(board_repr1[i, :, :, 7])
+
+    return unoccupied, available
+
+@jitclass(repr_spec)
+class RepresentationGeneratorV2:
+    def __init__(self):
+        self.version = 2
+
+    def generate(self, board, deck, score, other_score, ingenious, num_ingenious, can_exchange, should_exchange, turn_of):
+        board_repr1 = board.get_state_copy() # 11 x 11 x 8 (i x j x [6 colours, occupied, available])
+        board_repr2 = board.get_state2_copy() # 11 x 11 x 6 (i x j x [6 colours])
+        board_repr = make_state_repr(board_repr1, board_repr2) # 8* x 6
+        deck_repr = deck.get_state_copy() # 2 x 6 ([single tiles, double tiles] x [6 colours])
+
+        your_score_repr = score.get_score_copy().astype(np.int32)
+        other_score_repr = other_score.get_score_copy().astype(np.int32)
+        score_diff_repr = your_score_repr - other_score_repr
+
+        scores_repr = np.vstack((
+            np.expand_dims(your_score_repr, 0),
+            np.expand_dims(other_score_repr, 0),
+            np.expand_dims(score_diff_repr, 0)
+            )) # 3 x 6 ([player_turn_of, player_other, diff x [6 colour counts]])
+
+        general_repr = np.array((
+            ingenious,
+            num_ingenious,
+            can_exchange,
+            should_exchange * can_exchange, # always 0 if can't exchange
+            board.move_num,
+            121 - np.sum(board_repr1[:, :, 6]),
+            np.sum(board_repr1[:, :, 7]),
+            int(np.sum(board_repr1[:, :, 7]) == 0)
+            ), dtype=np.uint8)
+
+        values_repr = np.zeros(2, dtype=np.uint8)
+
+        new_reprs_buffer = self.get_new_reprs_buffer()
+        new_reprs_buffer.set_single_reprs_from_scratch(
+            board_repr1,
+            board_repr,
+            deck_repr,
+            scores_repr,
+            general_repr,
+            turn_of,
+            values_repr
+            )
+        return new_reprs_buffer
+
+    def generate_batched(self, board, deck, score, other_score, turn_of, possible_moves):
+        b = possible_moves.shape[0] # possible moves shape: b x 8
+
+        board_repr1 = board.batch_get_updated_states(possible_moves) # b x 11 x 11 x 8
+        next_availables = board.batch_get_updated_available(possible_moves, board.available, board.occupied) # b x 13 x 13 x 13
+        next_cluster_sizes = board.batch_get_updated_scoring_clusters(possible_moves, board.c, board.s) # b x 3 x 13 x 13 x 13 x 6
+        board_repr2 = board.batch_get_updated_states2(possible_moves, next_availables, next_cluster_sizes) # b x 11 x 11 x 6
+
+        board_repr = batch_make_state_repr(board_repr1, board_repr2) # b x 8* x 6
+        unoccupied, available = batch_get_unoccuvailable(board_repr1)
+        none_available = (available == 0).astype(np.uint8)
+
+        deck_repr = deck.batch_peek_next_states(possible_moves[:, 6:8]) # b x 2 x 6
+        move_scores = board.batch_calculate_move_scores(possible_moves) # b x 6
+        updated_scores, ingenious, num_ingenious = score.batch_peek_next_scores(move_scores) # b x 6, b, b
+
+        next_decks = deck.batch_peek_next_decks(possible_moves[:, 6:8]) # b x 6 x 2
+        can_exchange = batch_peek_can_exchange_tiles(next_decks, updated_scores) # b
+
+        updated_scores = updated_scores.astype(np.int32)
+        other_score = other_score.get_score().flatten().astype(np.int32)
+        scores_repr = np.zeros((b, 3, 6)).astype(np.int32) # b x 2 x 6
+
+        for idx in range(b):
+            scores_repr[idx, 0, :] = updated_scores[idx]
+            scores_repr[idx, 1, :] = other_score
+            scores_repr[idx, 2, :] = updated_scores[idx] - other_score
+
+        general_repr_dont_exchange = np.hstack((
+            np.expand_dims(ingenious, 1),
+            np.expand_dims(num_ingenious, 1),
+            np.expand_dims(can_exchange, 1),
+            np.zeros((b, 1), dtype=np.uint8),
+            np.ones((b, 1), dtype=np.uint8) * board.move_num,
+            np.expand_dims(unoccupied, 1),
+            np.expand_dims(available, 1),
+            np.expand_dims(none_available, 1)
+            ))
+
+        general_repr_do_exchange = np.hstack((
+            np.expand_dims(ingenious, 1),
+            np.expand_dims(num_ingenious, 1),
+            np.expand_dims(can_exchange, 1),
+            np.ones((b, 1), dtype=np.uint8),
+            np.ones((b, 1), dtype=np.uint8) * board.move_num,
+            np.expand_dims(unoccupied, 1),
+            np.expand_dims(available, 1),
+            np.expand_dims(none_available, 1)
+            ))
+
+        possible_moves_stacked = np.concatenate((possible_moves, possible_moves))
+        board_repr1_stacked = np.concatenate((board_repr1, board_repr1))
+        board_repr_stacked = np.concatenate((board_repr, board_repr))
+        deck_repr_stacked = np.concatenate((deck_repr, deck_repr))
+        scores_repr_stacked = np.concatenate((scores_repr, scores_repr))
+        general_repr_stacked = np.concatenate((general_repr_dont_exchange, general_repr_do_exchange))
+
+        can_exchange_stacked = np.concatenate((can_exchange, can_exchange))
+        should_exchange_stacked = np.concatenate((np.zeros(b, dtype=np.uint8), np.ones(b, dtype=np.uint8)))
+        valid_idxs = np.where(((can_exchange_stacked == 0) & (should_exchange_stacked == 0)) | (can_exchange_stacked == 1))[0]
+
+        possible_moves_subset = possible_moves_stacked[valid_idxs].astype(np.uint8)
+        board_repr1_subset = board_repr1_stacked[valid_idxs].astype(np.uint8)
+        board_repr_subset = board_repr_stacked[valid_idxs].astype(np.uint8)
+        deck_repr_subset = deck_repr_stacked[valid_idxs].astype(np.uint8)
+        scores_repr_subset = scores_repr_stacked[valid_idxs].astype(np.int32)
+        general_repr_subset = general_repr_stacked[valid_idxs].astype(np.uint8)
+
+        turn_of_repr = np.full(valid_idxs.shape[0], turn_of, dtype=np.uint8)
+        values_repr = np.zeros((valid_idxs.shape[0], 2), dtype=np.uint8)
+
+        new_reprs_buffer = self.get_new_reprs_buffer()
+        new_reprs_buffer.set_batched_reprs_from_scratch(
+            board_repr1_subset,
+            board_repr_subset,
+            deck_repr_subset,
+            scores_repr_subset,
+            general_repr_subset,
+            turn_of_repr,
+            values_repr
+            )
+        return new_reprs_buffer, possible_moves_subset
+
+    def get_new_reprs_buffer(self):
+        return RepresentationsBufferV2()
+
+reprs_buffer_spec_v2 = [
+    ('version', uint8),
+    ('size', int32),
+    ('empty', uint8),
+    ('board_repr1', uint8[:, :, :, :] ),
+    ('board_repr2', uint8[:, :, :] ),
+    ('deck_repr', uint8[:, :, :] ),
+    ('scores_repr', int32[:, :, :] ),
+    ('general_repr', uint8[:, :] ),
+    ('values_repr', uint8[:, :] ),
+    ('turn_of_repr', uint8[:] ),
+    ]
+
+@jitclass(reprs_buffer_spec_v2)
+class RepresentationsBufferV2():
+    def __init__(self):
+        self.version = 2
+        self.size = 0
+        self.empty = 1
+
+    def set_single_reprs_from_scratch(self, board_repr1, board_repr2, deck_repr, scores_repr, general_repr, turn_of_repr, values_repr):
+        self.board_repr1 = np.expand_dims(board_repr1, 0)
+        self.board_repr2 = np.expand_dims(board_repr2, 0)
+        self.deck_repr = np.expand_dims(deck_repr, 0)
+        self.scores_repr = np.expand_dims(scores_repr, 0)
+        self.general_repr = np.expand_dims(general_repr, 0)
+        self.values_repr = np.expand_dims(values_repr, 0)
+        self.turn_of_repr = turn_of_repr
+        self.size += 1
+        self.empty = 0
+
+    def set_batched_reprs_from_scratch(self, board_repr1, board_repr2, deck_repr, scores_repr, general_repr, turn_of_repr, values_repr):
+        self.board_repr1 = board_repr1
+        self.board_repr2 = board_repr2
+        self.deck_repr = deck_repr
+        self.scores_repr = scores_repr
+        self.general_repr = general_repr
+        self.values_repr = values_repr
+        self.turn_of_repr = turn_of_repr
+        self.size += board_repr1.shape[0]
+        self.empty = 0
+
+    def set_reprs_from_reprs(self, reprs):
+        self.board_repr1 = reprs.board_repr1
+        self.board_repr2 = reprs.board_repr2
+        self.deck_repr = reprs.deck_repr
+        self.scores_repr = reprs.scores_repr
+        self.general_repr = reprs.general_repr
+        self.turn_of_repr = reprs.turn_of_repr
+        self.values_repr = reprs.values_repr
+        self.size += reprs.size
+        self.empty = 0
+
+    def combine_reprs(self, reprs):
+        if self.empty == 1:
+            self.set_reprs_from_reprs(reprs)
+        else:
+            self.board_repr1 = np.concatenate((reprs.board_repr1, self.board_repr1))
+            self.board_repr2 = np.concatenate((reprs.board_repr2, self.board_repr2))
+            self.deck_repr = np.concatenate((reprs.deck_repr, self.deck_repr))
+            self.scores_repr = np.concatenate((reprs.scores_repr, self.scores_repr))
+            self.general_repr = np.concatenate((reprs.general_repr, self.general_repr))
+            self.turn_of_repr = np.concatenate((reprs.turn_of_repr, self.turn_of_repr))
+            self.values_repr = np.concatenate((reprs.values_repr, self.values_repr))
+            self.size += reprs.size
+
+    def clip_to_size(self, required_size):
+        self.board_repr1 = self.board_repr1[:required_size]
+        self.board_repr2 = self.board_repr2[:required_size]
+        self.deck_repr = self.deck_repr[:required_size]
+        self.scores_repr = self.scores_repr[:required_size]
+        self.general_repr = self.general_repr[:required_size]
+        self.turn_of_repr = self.turn_of_repr[:required_size]
+        self.values_repr = self.values_repr[:required_size]
+        self.size = required_size
+
+    def get_examples_by_idxs(self, idxs):
+        x = (self.board_repr1[idxs], self.board_repr2[idxs], self.deck_repr[idxs], self.scores_repr[idxs], self.general_repr[idxs])
+        y = self.values_repr[idxs, 0]
+        return x, y
+
+    def augment(self, board_repr1, board_repr2, deck_repr, scores_repr, general_repr):
+        n = board_repr1.shape[0]
+        ordering = np.array((0, 1, 2, 3, 4, 5)).astype(np.uint8)
+
+        for i in range(n):
+            np.random.shuffle(ordering)
+            board_ordering = np.concatenate((ordering, np.array((6, 7)))).astype(np.uint8)
+
+            board_repr1_example1 = board_repr1[i]
+            board_repr2_example1 = board_repr2[i]
+            deck_repr_example1 = deck_repr[i]
+            scores_repr_example1 = scores_repr[i]
+
+            board_repr1_example_augmented1 = board_repr1_example1[:, :, board_ordering]  # b x 11 x 11 x 8
+            board_repr2_example_augmented1 = board_repr2_example1[:, ordering]  # b x 8* x 6
+            deck_repr_example_augmented1 = deck_repr_example1[:, ordering]      # b x 2 x 6
+            scores_repr_example_augmented1 = scores_repr_example1[:, ordering]  # b x 2 x 6
+
+            board_repr1[i] = board_repr1_example_augmented1
+            board_repr2[i] = board_repr2_example_augmented1
+            deck_repr[i] = deck_repr_example_augmented1
+            scores_repr[i] = scores_repr_example_augmented1
+
+        return (board_repr1, board_repr2, deck_repr, scores_repr, general_repr)
+
+    def normalise(self, board_repr1, board_repr2, deck_repr, scores_repr, general_repr):
+        board_repr1_normalised = board_repr1.astype(np.float32)     # b x 11 x 11 x 6
+        board_repr2_normalised = board_repr2.astype(np.float32)     # b x 8* x 6
+        deck_repr_normalised = deck_repr.astype(np.float32)         # b x 2 x 6
+        scores_repr_normalised = scores_repr.astype(np.float32)     # b x 2 x 6
+        general_repr_normalised = general_repr.astype(np.float32)   # b x 8
+
+        board_repr2_normalised /= np.array((21, 21, 45, 1, 9, 9, 9, 9)).reshape(1, 8, 1).astype(np.float32)
+
+        deck_repr_normalised /= 4.0
+        scores_repr_normalised /= 18.0
+        general_repr_normalised /= np.array(((1, 2, 1, 1, 40, 85, 45, 1))).astype(np.float32)
+
+        return (board_repr1_normalised, board_repr2_normalised, deck_repr_normalised, scores_repr_normalised, general_repr_normalised)
+
+    def prepare(self, board_repr1, board_repr2, deck_repr, scores_repr, general_repr):
+        b = board_repr1.shape[0]
+
+        board_repr_flat = board_repr2.reshape(b, -1)
+        deck_repr_flat = deck_repr.reshape(b, -1)
+        scores_repr_flat = scores_repr.reshape(b, -1)
+        general_repr_flat = general_repr
+        vector_input = np.hstack((board_repr_flat, deck_repr_flat, scores_repr_flat, general_repr_flat))
+
+        return (board_repr1, vector_input)

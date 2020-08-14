@@ -34,7 +34,7 @@ class ReplayBuffer:
         inputs_normalised = self.buffer.normalise(*inputs_augmented)
         inputs_prepared = self.buffer.prepare(*inputs_normalised)
         labels = labels.astype(np.int32)
-        return inputs_prepared, inputs_augmented, labels
+        return inputs_prepared, inputs_prepared, labels
 
     def sample_training_minibatch(self):
         examples, labels, sampled_idxs = self.sample_examples(self.batch_size)
