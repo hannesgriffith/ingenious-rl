@@ -419,6 +419,79 @@ def fast_update_state_for_hex(state, coords, colour):
     return state
 
 @njit(cache=True)
+def fast_count_scores(colour_channel, top_k):
+    out = np.zeros((top_k), dtype=np.uint8)
+
+    colour_channel_flat = colour_channel.flatten()
+    colour_channel_flat.sort()
+
+    for k in range(top_k):
+        out[k] = colour_channel_flat[-1 - k]
+
+    return out
+
+@njit(cache=True)
+def fast_generate_vector_representation(playable, available, state, scores, height, width):
+    colour_counts = np.zeros((6,), dtype=np.uint8)
+    score_counts = np.zeros((3 + 8, 6), dtype=np.uint8)
+    vector_repr = np.zeros((6 + (3 + 8) * 6 + 2))
+
+    for c in prange(6):
+        colour_counts_sum = 0
+        score_counts_sum_0 = 0
+        score_counts_sum_1 = 0
+        score_counts_sum_2 = 0
+
+        for i in range(1, height + 1):
+            for j in range(2, width + 2):
+                colour_counts_sum += state[i, j, c]
+                score_counts_sum_1 += scores[i, j, 3, c]
+
+                if scores[i, j, 3, c] > 0:
+                    score_counts_sum_0 += 1
+
+                if available[i, j] == 1 and scores[i, j, 3, c] == 0:
+                    score_counts_sum_2 += 1
+
+        colour_counts[c] = colour_counts_sum
+        score_counts[0, c] = score_counts_sum_0
+        score_counts[1, c] = score_counts_sum_1
+        score_counts[2, c] = score_counts_sum_2
+
+        score_counts[3:, c] = fast_count_scores(scores[:, :, 3, c], 8)
+
+    num_playable = 0
+    num_available = 0
+    for i in range(1, height + 1):
+        for j in range(2, width + 2):
+            num_playable += playable[i, j]
+            num_available += available[i, j]
+
+    vector_repr[0] = num_playable
+    vector_repr[1] = num_available
+    vector_repr[2:2+6] = colour_counts
+    vector_repr[2+6:] = score_counts.flatten()
+
+    return vector_repr
+
+@njit(parallel=True, fastmath=True, cache=True)
+def fast_batch_generate_vector_representation(updated_playable, updated_available, updated_states, updated_scores, height, width):
+    batch_size = updated_playable.shape[0]
+    updated_board_vecs = np.zeros((batch_size, 74), dtype=np.uint8)
+
+    for idx in prange(batch_size):
+        updated_board_vecs[idx] = fast_generate_vector_representation(
+            updated_playable[idx],
+            updated_available[idx],
+            updated_states[idx],
+            updated_scores[idx],
+            height,
+            width
+            )
+
+    return updated_board_vecs # b x 74
+
+@njit(cache=True)
 def fast_update_scoring_arrays_for_hex(coords, colour, clusters, sizes, scores, playable, all_directions, height, width):
     i0, j0 = coords
 
@@ -515,6 +588,29 @@ def fast_update_scoring_arrays_for_hex(coords, colour, clusters, sizes, scores, 
                 scores[i, j, :, :] = 0
 
     return clusters, sizes, scores
+
+# @njit(parallel=True, fastmath=True, cache=True)
+# def fast_batch_get_updated_scoring_arrays(moves, updated_playables, height, width, all_directions, clusters, sizes, scores):
+#     num_moves = moves.shape[0]
+#     updated_clusters = np.zeros((num_moves, height + 2, width + 4, 3, 6), dtype=np.uint8)
+#     updated_sizes = np.zeros((num_moves, height + 2, width + 4, 3, 6), dtype=np.uint8)
+#     updated_scores = np.zeros((num_moves, height + 2, width + 4, 4, 6), dtype=np.uint8)
+
+#     for move_idx in prange(num_moves):
+#         coords1 = moves[move_idx, 0:2]
+#         coords2 = moves[move_idx, 2:4]
+#         colour1 = moves[move_idx, 4]
+#         colour2 = moves[move_idx, 5]
+#         updated_playable = updated_playables[move_idx]
+#         updated_clusters[move_idx] = clusters
+#         updated_sizes[move_idx] = sizes
+#         updated_scores[move_idx] = scores
+#         updated_clusters[move_idx], updated_sizes[move_idx], updated_scores[move_idx] = fast_update_scoring_arrays_for_hex(
+#             coords1, colour1, updated_clusters[move_idx], updated_sizes[move_idx], updated_scores[move_idx], updated_playable, all_directions, height, width)
+#         updated_clusters[move_idx], updated_sizes[move_idx], updated_scores[move_idx] = fast_update_scoring_arrays_for_hex(
+#             coords2, colour2, updated_clusters[move_idx], updated_sizes[move_idx], updated_scores[move_idx], updated_playable, all_directions, height, width)
+
+#     return updated_clusters, updated_sizes, updated_scores
 
 @njit(parallel=True, fastmath=True, cache=True)
 def fast_batch_get_updated_scoring_arrays(moves, updated_playables, height, width, all_directions, clusters_original, sizes_original, scores_original):
@@ -638,116 +734,3 @@ def fast_batch_get_updated_scoring_arrays(moves, updated_playables, height, widt
         updated_scores[move_idx] = scores
 
     return updated_clusters, updated_sizes, updated_scores
-
-@njit(cache=True)
-def fast_count_scores(colour_channel, top_k):
-    out = np.zeros((top_k), dtype=np.uint8)
-
-    colour_channel_flat = colour_channel.flatten()
-    colour_channel_flat.sort()
-
-    for k in range(top_k):
-        out[k] = colour_channel_flat[-1 - k]
-
-    return out
-
-@njit(cache=True)
-def fast_generate_vector_representation(playable, available, state, scores, height, width):
-    colour_counts = np.zeros((6,), dtype=np.uint8)
-    score_counts = np.zeros((3 + 8, 6), dtype=np.uint8)
-    vector_repr = np.zeros((6 + (3 + 8) * 6 + 2))
-
-    for c in prange(6):
-        colour_counts_sum = 0
-        score_counts_sum_0 = 0
-        score_counts_sum_1 = 0
-        score_counts_sum_2 = 0
-
-        for i in range(1, height + 1):
-            for j in range(2, width + 2):
-                colour_counts_sum += state[i, j, c]
-                score_counts_sum_1 += scores[i, j, 3, c]
-
-                if scores[i, j, 3, c] > 0:
-                    score_counts_sum_0 += 1
-
-                if available[i, j] == 1 and scores[i, j, 3, c] == 0:
-                    score_counts_sum_2 += 1
-
-        colour_counts[c] = colour_counts_sum
-        score_counts[0, c] = score_counts_sum_0
-        score_counts[1, c] = score_counts_sum_1
-        score_counts[2, c] = score_counts_sum_2
-
-        score_counts[3:, c] = fast_count_scores(scores[:, :, 3, c], 8)
-
-    num_playable = 0
-    num_available = 0
-    for i in range(1, height + 1):
-        for j in range(2, width + 2):
-            num_playable += playable[i, j]
-            num_available += available[i, j]
-
-    vector_repr[0] = num_playable
-    vector_repr[1] = num_available
-    vector_repr[2:2+6] = colour_counts
-    vector_repr[2+6:] = score_counts.flatten()
-
-    return vector_repr # 74
-
-@njit(parallel=True, fastmath=True, cache=True)
-def fast_batch_generate_vector_representation(updated_playable, updated_available, updated_states, updated_scores, height, width):
-    batch_size = updated_playable.shape[0]
-    updated_board_vecs = np.zeros((batch_size, 74), dtype=np.uint8)
-    top_k = 8
-
-    for idx in prange(batch_size):
-        playable = updated_playable[idx]
-        available = updated_available[idx]
-        state = updated_states[idx]
-        scores = updated_scores[idx]
-
-        colour_counts = np.zeros((6,), dtype=np.uint8)
-        score_counts = np.zeros((3 + 8, 6), dtype=np.uint8)
-
-        for c in range(6):
-            colour_counts_sum = 0
-            score_counts_sum_0 = 0
-            score_counts_sum_1 = 0
-            score_counts_sum_2 = 0
-
-            for i in range(1, height + 1):
-                for j in range(2, width + 2):
-                    colour_counts_sum += state[i, j, c]
-                    score_counts_sum_1 += scores[i, j, 3, c]
-
-                    if scores[i, j, 3, c] > 0:
-                        score_counts_sum_0 += 1
-
-                    if available[i, j] == 1 and scores[i, j, 3, c] == 0:
-                        score_counts_sum_2 += 1
-
-            colour_counts[c] = colour_counts_sum
-            score_counts[0, c] = score_counts_sum_0
-            score_counts[1, c] = score_counts_sum_1
-            score_counts[2, c] = score_counts_sum_2
-
-            colour_channel_flat = scores[:, :, 3, c].flatten()
-            colour_channel_flat.sort()
-
-            for k in range(top_k):
-                score_counts[3+k, c] = colour_channel_flat[-1 - k]
-
-        num_playable = 0
-        num_available = 0
-        for i in range(1, height + 1):
-            for j in range(2, width + 2):
-                num_playable += playable[i, j]
-                num_available += available[i, j]
-
-        updated_board_vecs[idx, 0] = num_playable
-        updated_board_vecs[idx, 1] = num_available
-        updated_board_vecs[idx, 2:2+6] = colour_counts
-        updated_board_vecs[idx, 2+6:] = score_counts.flatten()
-
-    return updated_board_vecs # b x 74

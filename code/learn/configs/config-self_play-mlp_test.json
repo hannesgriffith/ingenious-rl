@@ -1,0 +1,21 @@
+{
+    "restore_ckpt_dir": null,
+    "game_type": "training",
+    "network_type": "mlp",
+    "log_every_n_steps": 10,
+    "vis_every_n_steps": 50,
+    "test_every_n_steps": 250,
+    "n_test_games": 50,
+    "n_other_games": 20,
+    "effective_batch_size": 1024,
+    "max_train_batch_size": 2048,
+    "max_eval_batch_size": 2048,
+    "episodes_per_step": 1,
+    "updates_per_step": 1,
+    "improvement_threshold": 0.55,
+    "initial_learning_rate": 0.01,
+    "total_training_steps": 2,
+    "reduce_lr_step_threshold": 5000,
+    "replay_buffer_size": 1050,
+    "weight_decay": 0.0001
+}

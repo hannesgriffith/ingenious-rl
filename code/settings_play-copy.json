@@ -1,0 +1,19 @@
+{
+    "1": {
+        "name": "Human",
+        "player_type": "human",
+        "strategy_type": null,
+        "show_deck": true
+    },
+    "2": {
+        "name": "Computer",
+        "player_type": "computer",
+        "strategy_type": "rl_3ply",
+        "network_type": "mlp_v3",
+        "ckpt_path": "best_ckpts/mlp_v3_best_self_0308_0926.pth",
+        "show_deck": false
+    },
+    "game_type": "computer",
+    "representation": "v2",
+    "value_type": "v1"
+}

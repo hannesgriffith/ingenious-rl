@@ -1,30 +1,22 @@
 import time
 
-import pygame as pg
 from pygame.locals import *
 from tqdm import tqdm
 import numpy as np
-import torch
 
 from utils.io import load_json
-from game.gameplay import get_gameplay, Move, get_strategy_types
-from game.board import Board
-from game.tiles import Tiles
+from game.gameplay import get_gameplay 
 from game.player import get_player
-from learn.representation import get_representation
+from learn.strategy import get_strategy_types
 
 INPUT_SETTINGS = 'settings_speed_test.json'
-N_GAMES = 50
+N_GAMES = 100
 
 def play_game(gameplay, params):
-    board = Board()
-    tiles = Tiles()
-
     strat_1, strat_2 = get_strategy_types(params)
-    player_1 = get_player(params[1]["player_type"], board, strat_1, params=params[1])
-    player_2 = get_player(params[2]["player_type"], board, strat_2, params=params[2])
+    player_1 = get_player(params[1]["player_type"], None, strat_1, params=params[1])
+    player_2 = get_player(params[2]["player_type"], None, strat_2, params=params[2])
     winner, _ = gameplay.play_test_game(player_1, player_2)
-
     return winner
 
 def main():

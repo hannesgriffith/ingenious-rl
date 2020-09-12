@@ -2,6 +2,7 @@ from numba import njit, prange
 import numpy as np
 
 from game.player import fast_batch_peek_can_exchange_tiles
+from game.utils import fast_initialise_start_playable
 
 class RepresentationsBuffer():
     def __init__(self):
@@ -228,29 +229,54 @@ def fast_augment(board_repr1, board_repr2, board_vec, deck_repr, scores_repr, ge
 
     return (board_repr1, board_repr2, board_vec, deck_repr, scores_repr, general_repr)
 
-@njit(parallel=True, fastmath=True, cache=True)
+# @njit(cache=True)
 def fast_normalise(board_repr1, board_repr2, board_vec, deck_repr, scores_repr, general_repr):
-    for i in prange(board_repr1.shape[0]):
-        board_repr1[i, :, :, 8] /= 6.
+    b = board_repr1.shape[0]
 
-        board_repr2[i, :, :, 0, :] /= 5.
-        board_repr2[i, :, :, 1, :] /= 5.
-        board_repr2[i, :, :, 2, :] /= 5.
-        board_repr2[i, :, :, 3, :] /= 9.
+    board_repr1_normalised = board_repr1.astype(np.float32)     # b x 13 x 23 x 11
+    board_repr1_normalised[..., 8] /= 6.0 # normalise areas channel
 
-        board_vec[i, 0] /= 85.
-        board_vec[i, 1] /= 21.
-        board_vec[i, 2:8] /= 21.
-        board_vec[i, 8:8+6] /= 21.
-        board_vec[i, 8+6:8+18] /= 45.
-        board_vec[i, 8+18:] /= 9.
+    board_repr2_normalised = board_repr2.astype(np.float32)     # b x 13 x 23 x 4 x 6
+    board_repr2_normalised /= np.array((5, 5, 5, 9)).reshape(1, 1, 1, 4, 1).astype(np.float32)
 
-        deck_repr[i] /= 4.
-        scores_repr[i] /= 18.
-        general_repr[i, 1] /= 2.
-        general_repr[i, 4] /= 40.
+    board_vec_normalised = board_vec.astype(np.float32)     # b x 19
+    board_vec_normalised[:, :2] /= np.array((85, 21)).reshape(1, 2).astype(np.float32)
+    board_vec_normalised[:, 2:8] /= 21.0
 
-    return (board_repr1, board_repr2, board_vec, deck_repr, scores_repr, general_repr)
+    score_counts = board_vec_normalised[:, 8:]
+    score_counts = np.copy(score_counts).reshape(b, 3 + 8, 6)
+    score_counts /= np.array((21, 45, 45, 9, 9, 9, 9, 9, 9, 9, 9)).reshape(1, 3 + 8, 1).astype(np.float32)
+    board_vec_normalised[:, 8:] = score_counts.reshape(b, (3 + 8) * 6)
+
+    deck_repr_normalised = deck_repr.astype(np.float32)         # b x 2 x 6
+    deck_repr_normalised /= 4.0
+
+    scores_repr_normalised = scores_repr.astype(np.float32)     # b x 2 x 6
+    scores_repr_normalised /= 18.0
+
+    general_repr_normalised = general_repr.astype(np.float32)   # b x 5
+    general_repr_normalised /= np.array(((1, 2, 1, 1, 40))).astype(np.float32)
+
+    return (board_repr1_normalised, board_repr2_normalised, board_vec_normalised, deck_repr_normalised, scores_repr_normalised, general_repr_normalised)
+
+# @njit(cache=True)
+def fast_concat_channels_4d(array1, array2):
+    shape = array1.shape
+    output = np.zeros((0, shape[1], shape[2], shape[0]))
+
+    array1_T = np.transpose(array1, (3, 1, 2, 0))
+    array2_T = np.transpose(array2, (3, 1, 2, 0))
+    output = np.concatenate((array1_T, array2_T))
+
+    return np.transpose(output, (3, 1, 2, 0))
+
+# @njit(cache=True)
+def vector_to_grid(vector):
+    shape = vector.shape
+    empty_grid = fast_initialise_start_playable().astype(np.float32).reshape(1, 11 + 2, 21 + 4, 1)
+    vector_reshaped = vector.reshape(shape[0], 1, 1, shape[1])
+    vector_as_grid = empty_grid * vector_reshaped
+    return vector_as_grid
 
 # @njit(cache=True)
 def fast_prepare_vector_input(board_vec_flat, deck_repr, scores_repr, general_repr_flat):
@@ -262,10 +288,13 @@ def fast_prepare_vector_input(board_vec_flat, deck_repr, scores_repr, general_re
     return vector_for_grid, vector_input
 
 # @njit(cache=True)
-def fast_prepare_grid_input(board_repr1, board_repr2):
+def fast_prepare_grid_input(board_repr1, board_repr2, vector_for_grid):
     b = board_repr1.shape[0]
     board_repr2_reshaped = board_repr2.reshape(b, 11 + 2, 21 + 4, 4 * 6)
-    return np.concatenate((board_repr1, board_repr2_reshaped), axis=3)
+    vector_as_grid = vector_to_grid(vector_for_grid)
+    combined_grid_input = fast_concat_channels_4d(board_repr1, board_repr2_reshaped)
+    combined_grid_input = fast_concat_channels_4d(combined_grid_input, vector_as_grid)
+    return combined_grid_input
 
 # @njit(cache=True)
 def fast_add_score_features(scores_repr):
@@ -279,12 +308,12 @@ def fast_add_score_features(scores_repr):
 def fast_prepare(board_repr1, board_repr2, board_vec, deck_repr, scores_repr, general_repr):
     scores_repr = fast_add_score_features(scores_repr)
     vector_for_grid, vector_input = fast_prepare_vector_input(board_vec, deck_repr, scores_repr, general_repr)
-    grid_input = fast_prepare_grid_input(board_repr1, board_repr2)
-    return ((grid_input, vector_for_grid), vector_input)
+    grid_input = fast_prepare_grid_input(board_repr1, board_repr2, vector_for_grid)
+    return (grid_input, vector_input)
 
+# @njit(cache=True)
 def fast_preprocess(inputs):
-    inputs = fast_augment(*inputs)
-    inputs = [input_.astype(np.float32) for input_ in inputs]
-    inputs = fast_normalise(*inputs)
-    inputs = fast_prepare(*inputs)
-    return inputs
+    inputs_augmented = fast_augment(*inputs)
+    inputs_normalised = fast_normalise(*inputs_augmented)
+    inputs_prepared = fast_prepare(*inputs_normalised)
+    return inputs_prepared

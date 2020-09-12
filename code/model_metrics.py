@@ -1,14 +1,10 @@
-import time
-
 from tqdm import tqdm
 import numpy as np
 
-from utils.io import load_json
-from game.gameplay import get_gameplay, Move, get_strategy_types
+from game.gameplay import get_gameplay
 from game.board import Board
 from game.tiles import Tiles
 from game.player import get_player
-from learn.representation import get_representation
 
 N_GAMES = 10
 

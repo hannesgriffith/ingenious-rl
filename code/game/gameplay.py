@@ -1,16 +1,12 @@
-from numba import njit
 import numpy as np
 
 from game.board import Board
 from game.tiles import Tiles
 from game.player import get_player, Deck, Score
-from game.utils import get_other_player, find_winner_fast
-from learn.representation import get_representation
-from learn.value import get_value_type
-from learn.network import get_network
-
-# class to set up configuration, rather than get functions
-# add personal tiles tracker for agent
+from game.utils import get_other_player, find_winner_fast, add_values_for_episode
+from learn.strategy import get_strategy_types
+from learn.representation import RepresentationGenerator, RepresentationsBuffer
+from ui.interface import Request, display_to_game_tiles
 
 def get_gameplay(params):
     if params["game_type"] == "real":
@@ -22,40 +18,17 @@ def get_gameplay(params):
     else:
         raise ValueError("Invalid gameplay type chosen.")
 
-def get_strategy_types(params):
-    strategy_type_1 = None
-    strategy_type_2 = None
-
-    if params[1]["player_type"] == "computer":
-        strategy_type_1 = params[1]["strategy_type"]
-
-    if params[2]["player_type"] == "computer":
-        strategy_type_2 = params[2]["strategy_type"]
-
-    return strategy_type_1, strategy_type_2
-
-class RealGameplay:
+class Gameplay:
     def __init__(self, params):
         self.params = params
-        self.number_moves = 0
         self.players = {1: None, 2: None}
+        self.ingenious = False
         self.turn_of = None
         self.other = None
-        self.ingenious = False
-        self.num_to_pickup = 0
 
-    def initialise_game(self, player_to_start):
+    def initialise_game(self):
         self.board = Board()
         self.tiles = Tiles()
-
-        strat_1, strat_2 = get_strategy_types(self.params)
-        self.players[1] = get_player(self.params[1]["player_type"], self.board, strat_1, params=self.params[1])
-        self.players[2] = get_player(self.params[2]["player_type"], self.board, strat_2, params=self.params[2])
-
-        self.turn_of = get_other_player(player_to_start)
-        self.other = get_other_player(self.turn_of)
-        if self.params["representation"]:
-            self.representation = get_representation(self.params)
 
     def switch_player(self):
         tmp = self.other
@@ -66,6 +39,25 @@ class RealGameplay:
         p1_score = self.players[1].get_score()
         p2_score = self.players[2].get_score()
         return find_winner_fast(p1_score, p2_score)
+
+    def next_(self):
+        raise NotImplementedError("Required to implement next_()")
+
+class RealGameplay(Gameplay):
+    def __init__(self, params):
+        super().__init__(params)
+        self.num_to_pickup = 0
+        self.number_moves = 0
+
+    def initialise_game(self, player_to_start):
+        super().initialise_game()
+        strat_1, strat_2 = get_strategy_types(self.params)
+        self.players[1] = get_player(self.params[1]["player_type"], self.board, strat_1, params=self.params[1])
+        self.players[2] = get_player(self.params[2]["player_type"], self.board, strat_2, params=self.params[2])
+
+        self.turn_of = get_other_player(player_to_start)
+        self.other = get_other_player(self.turn_of)
+        self.representation = RepresentationGenerator(self.params)
 
     def get_initial_request(self):
         initial_request = Request()
@@ -130,19 +122,13 @@ class RealGameplay:
         self.number_moves += 1
         return request
 
-class ComputerGameplay:
+class ComputerGameplay(Gameplay):
     def __init__(self, params):
-        self.params = params
+        super().__init__(params)
         self.number_moves = 0
-        self.players = {1: None, 2: None}
-        self.turn_of = None
-        self.other = None
-        self.ingenious = False
 
     def initialise_game(self, _):
-        self.board = Board()
-        self.tiles = Tiles()
-
+        super().initialise_game()
         strat_1, strat_2 = get_strategy_types(self.params)
         self.players[1] = get_player(self.params[1]["player_type"], self.board, strat_1, params=self.params[1])
         self.players[2] = get_player(self.params[2]["player_type"], self.board, strat_2, params=self.params[2])
@@ -151,18 +137,7 @@ class ComputerGameplay:
         self.other = get_other_player(self.turn_of)
         self.players[self.other].pick_up(self.tiles)
         self.players[self.turn_of].pick_up(self.tiles)
-        if self.params["representation"]:
-            self.representation = get_representation(self.params)
-
-    def switch_player(self):
-        tmp = self.other
-        self.other = self.turn_of
-        self.turn_of = tmp
-
-    def find_winner(self):
-        p1_score = self.players[1].get_score()
-        p2_score = self.players[2].get_score()
-        return find_winner_fast(p1_score, p2_score)
+        self.representation = RepresentationGenerator()
 
     def get_initial_request(self):
         initial_request = Request()
@@ -184,7 +159,7 @@ class ComputerGameplay:
                 self.board.update_board(move_made)
 
                 request.add_update_score(item["player"], score)
-                tile = move_made[6:8]
+                tile = move_made[4:6]
                 self.players[item["player"]].deck.play_tile(tile)
 
                 if not self.ingenious:
@@ -233,20 +208,13 @@ class ComputerGameplay:
         self.number_moves += 1
         return request
 
-class TrainingGameplay:
+class TrainingGameplay(Gameplay):
     def __init__(self, params):
-        self.params = params
-        self.players = {1: None, 2: None}
-        self.turn_of = None
-        self.other = None
-        self.ingenious = False
+        super().__init__(params)
         self.should_exchange = {1: False, 2: False}
-        self.num_moves = 0
 
     def initialise_game(self, player_1, player_2):
-        self.board = Board()
-        self.tiles = Tiles()
-
+        super().initialise_game()
         self.players[1] = player_1
         self.players[2] = player_2
         self.players[1].board = self.board
@@ -258,22 +226,11 @@ class TrainingGameplay:
         self.players[1].score = Score()
         self.players[2].score = Score()
 
-        self.representation = get_representation(self.params)
-        self.move_value = get_value_type(self.params)
+        self.representation = RepresentationGenerator()
         self.turn_of = np.random.choice([1, 2])
         self.other = get_other_player(self.turn_of)
         self.players[self.turn_of].pick_up(self.tiles)
         self.players[self.other].pick_up(self.tiles)
-
-    def switch_player(self):
-        tmp = self.other
-        self.other = self.turn_of
-        self.turn_of = tmp
-
-    def find_winner(self):
-        p1_score = self.players[1].get_score()
-        p2_score = self.players[2].get_score()
-        return find_winner_fast(p1_score, p2_score)
 
     def next_(self, generate_representation=True):
         if not self.ingenious:
@@ -325,15 +282,19 @@ class TrainingGameplay:
         while True:
             self.initialise_game(p1, p2)
             winner = None
-            representations = self.representation.get_new_reprs_buffer()
+            representations = RepresentationsBuffer()
             while winner is None:
                 move_representations, winner = self.next_(generate_representation=True)
                 representations.combine_reprs(move_representations)
                 del move_representations
 
             if winner != 0:
-                updated_representations = self.move_value.add_values_for_episode(representations, winner)
-                return winner, updated_representations
+                representations.values_repr = add_values_for_episode(
+                    representations.values_repr,
+                    representations.turn_of_repr,
+                    winner
+                    )
+                return winner, representations
 
     def play_test_game(self, p1, p2):
         while True:
@@ -343,219 +304,3 @@ class TrainingGameplay:
                 _, winner = self.next_(generate_representation=False)
             if winner != 0:
                 return winner, None
-
-class Request:
-    def __init__(self):
-        self.actions = []
-
-    def add_display_message(self, player, message):
-        action = {"player": player,
-                  "type": "display_message",
-                  "body": message}
-        self.actions.append(action)
-
-    def add_make_move(self, player, move):
-        action = {"player": player,
-                  "type": "make_move",
-                  "body": game_to_display_move(move)}
-        self.actions.append(action)
-
-    def add_request_pickup_tiles(self, player, number_to_pickup):
-        action = {"player": player,
-                  "type": "request_pickup",
-                  "body": number_to_pickup}
-        self.actions.append(action)
-
-    def add_request_exchange_tiles(self, player):
-        action = {"player": player,
-                  "type": "request_exchange",
-                  "body": None}
-        self.actions.append(action)
-
-    def add_computer_exchange_tiles(self, player):
-        action = {"player": player,
-                  "type": "computer_exchange_tiles",
-                  "body": None}
-        self.actions.append(action)
-
-    def possible_exchange(self, player):
-        action = {"player": player,
-                  "type": "possible_exchange",
-                  "body": None}
-        self.actions.append(action)
-
-    def add_request_move(self, player):
-        action = {"player": player,
-                  "type": "request_move",
-                  "body": None}
-        self.actions.append(action)
-
-    def add_update_score(self, player, score):
-        action = {"player": player,
-                  "type": "update_score",
-                  "body": game_to_display_score(score)}
-        self.actions.append(action)
-
-    def add_update_deck(self, player):
-        action = {"player": player,
-                  "type": "update_deck",
-                  "body": None}
-        self.actions.append(action)
-
-    def add_game_finished(self, player, winner):
-        action = {"player": player,
-                  "type": "game_finished",
-                  "body": winner}
-        self.actions.append(action)
-
-    def action_iterator(self):
-        for action in self.actions:
-            yield action
-
-class Move:
-    def __init__(self, coord1, coord2, colour1, colour2):
-        self.i1 = coord1[0]
-        self.j1 = coord1[1]
-        self.i2 = coord2[0]
-        self.j2 = coord2[1]
-        self.c1 = colour1
-        self.c2 = colour2
-
-    def iterator(self):
-        hex1 = (self.i1, self.j1, self.c1)
-        hex2 = (self.i2, self.j2, self.c2)
-        for hex_ in [hex1, hex2]:
-            yield hex_
-
-    def to_game_coords(self):
-        coords_1 = display_to_game_coords((self.i1, self.j1))
-        coords_2 = display_to_game_coords((self.i2, self.j2))
-        return np.array([
-            coords_1[0],
-            coords_1[1],
-            coords_1[2],
-            coords_2[0],
-            coords_2[1],
-            coords_2[2],
-            self.c1 - 1,
-            self.c2 - 1
-        ], dtype=np.uint8)
-
-def display_to_game_tiles(tiles):
-    return np.array(tiles, dtype=np.uint8).reshape(-1, 2) - 1
-
-def game_to_display_score(score):
-    return score.flatten().tolist()
-
-def game_to_display_move(move):
-    coords_1 = game_to_display_coords(move[0:3])
-    coords_2 = game_to_display_coords(move[3:6])
-    colour_1, colour_2 = move[6:8] + 1
-    return Move(coords_1, coords_2, colour_1, colour_2)
-
-def game_to_display_coords(coords):
-    conversion_dict = game_to_display_coords_dict()
-    return conversion_dict[tuple(coords.tolist())]
-
-def display_to_game_coords(coords):
-    conversion_dict = display_to_game_coords_dict()
-    return conversion_dict[coords]
-
-def game_to_display_coords_dict():
-    conversion_dict = display_to_game_coords_dict()
-    return {v: k for k, v in conversion_dict.items()}
-
-def display_to_game_coords_dict():
-    return {
-        (0, 0): (5, 10, 0),
-        (0, 1): (4, 10, 1),
-        (0, 2): (3, 10, 2),
-        (0, 3): (2, 10, 3),
-        (0, 4): (1, 10, 4),
-        (0, 5): (0, 10, 5),
-        (0, 6): (0, 9, 6),
-        (0, 7): (0, 8, 7),
-        (0, 8): (0, 7, 8),
-        (0, 9): (0, 6, 9),
-        (0, 10): (0, 5, 10),
-        (1, 0): (6, 9, 0),
-        (1, 1): (5, 9, 1),
-        (1, 2): (4, 9, 2),
-        (1, 3): (3, 9, 3),
-        (1, 4): (2, 9, 4),
-        (1, 5): (1, 9, 5),
-        (1, 6): (1, 8, 6),
-        (1, 7): (1, 7, 7),
-        (1, 8): (1, 6, 8),
-        (1, 9): (1, 5, 9),
-        (1, 10): (1, 4, 10),
-        (2, 0): (7, 8, 0),
-        (2, 1): (6, 8, 1),
-        (2, 2): (5, 8, 2),
-        (2, 3): (4, 8, 3),
-        (2, 4): (3, 8, 4),
-        (2, 5): (2, 8, 5),
-        (2, 6): (2, 7, 6),
-        (2, 7): (2, 6, 7),
-        (2, 8): (2, 5, 8),
-        (2, 9): (2, 4, 9),
-        (2, 10): (2, 3, 10),
-        (3, 0): (8, 7, 0),
-        (3, 1): (7, 7, 1),
-        (3, 2): (6, 7, 2),
-        (3, 3): (5, 7, 3),
-        (3, 4): (4, 7, 4),
-        (3, 5): (3, 7, 5),
-        (3, 6): (3, 6, 6),
-        (3, 7): (3, 5, 7),
-        (3, 8): (3, 4, 8),
-        (3, 9): (3, 3, 9),
-        (3, 10): (3, 2, 10),
-        (4, 0): (9, 6, 0),
-        (4, 1): (8, 6, 1),
-        (4, 2): (7, 6, 2),
-        (4, 3): (6, 6, 3),
-        (4, 4): (5, 6, 4),
-        (4, 5): (4, 6, 5),
-        (4, 6): (4, 5, 6),
-        (4, 7): (4, 4, 7),
-        (4, 8): (4, 3, 8),
-        (4, 9): (4, 2, 9),
-        (4, 10): (4, 1, 10),
-        (5, 0): (10, 5, 0),
-        (5, 1): (9, 5, 1),
-        (5, 2): (8, 5, 2),
-        (5, 3): (7, 5, 3),
-        (5, 4): (6, 5, 4),
-        (5, 5): (5, 5, 5),
-        (5, 6): (5, 4, 6),
-        (5, 7): (5, 3, 7),
-        (5, 8): (5, 2, 8),
-        (5, 9): (5, 1, 9),
-        (5, 10): (5, 0, 10),
-        (6, 1): (10, 4, 1),
-        (6, 2): (9, 4, 2),
-        (6, 3): (8, 4, 3),
-        (6, 4): (7, 4, 4),
-        (6, 5): (6, 4, 5),
-        (6, 6): (6, 3, 6),
-        (6, 7): (6, 2, 7),
-        (6, 8): (6, 1, 8),
-        (6, 9): (6, 0, 9),
-        (7, 2): (10, 3, 2),
-        (7, 3): (9, 3, 3),
-        (7, 4): (8, 3, 4),
-        (7, 5): (7, 3, 5),
-        (7, 6): (7, 2, 6),
-        (7, 7): (7, 1, 7),
-        (7, 8): (7, 0, 8),
-        (8, 3): (10, 2, 3),
-        (8, 4): (9, 2, 4),
-        (8, 5): (8, 2, 5),
-        (8, 6): (8, 1, 6),
-        (8, 7): (8, 0, 7),
-        (9, 4): (10, 1, 4),
-        (9, 5): (9, 1, 5),
-        (9, 6): (9, 0, 6),
-        (10, 5): (10, 0, 5)
-    }

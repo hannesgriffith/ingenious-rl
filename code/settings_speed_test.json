@@ -2,18 +2,12 @@
     "1": {
         "name": "P1",
         "player_type": "computer",
-        "strategy_type": "rl",
-        "network_type": "conv_v2_plus",
-        "ckpt_path": "best_ckpts/conv_v2+_best_self_1806_1817.pth"
+        "strategy_type": "max"
         },
     "2": {
         "name": "P2",
         "player_type": "computer",
-        "strategy_type": "rl",
-        "network_type": "conv_v2_plus",
-        "ckpt_path": "best_ckpts/conv_v2+_best_self_1806_1817.pth"
+        "strategy_type": "max"
     },
-    "game_type": "training",
-    "representation": "v1",
-    "value_type": "v1"
+    "game_type": "training"
 }

@@ -10,7 +10,6 @@ from tqdm import tqdm
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 import torch.optim as optim
 from torch.utils.tensorboard import SummaryWriter
 
@@ -20,8 +19,7 @@ from game.gameplay import get_gameplay
 
 from learn.network import get_network
 from learn.replay_buffer import ReplayBuffer
-from learn.exploration import get_exploration_policy
-from learn.representation import get_representation
+from learn.representation import RepresentationGenerator
 from learn.visualisation import generate_debug_visualisation
 
 def count_parameters(model):
@@ -33,21 +31,20 @@ def set_model_to_half(model):
         if isinstance(layer, nn.BatchNorm2d):
             layer.float()
 
-class Params(object): 
+class Params: 
     def __init__(self, d):
         self.__dict__ = d
 
     def save(self, save_path):
         output_path = os.path.join(save_path, "config.json")
-        with open(output_path, 'w') as f:
-            json.dump(self.__dict__, f)
+        write_json(output_path, self.__dict__)
 
 class SelfPlayTrainingSession:
     def __init__(self, args, config):
         self.config = config
         self.p = Params(self.config)
         self.game = get_gameplay(self.config)
-        self.repr = get_representation(self.config)
+        self.repr = RepresentationGenerator()
         self.replay_buffer = ReplayBuffer(self.config)
 
         self.logs_dir = "logs/self_play_{}_{}".format(self.p.network_type, time.strftime("%Y-%m-%d_%H-%M"))
@@ -83,16 +80,15 @@ class SelfPlayTrainingSession:
         self.loss_criterion = nn.MSELoss(reduction='mean')
 
         self.scheduler = optim.lr_scheduler.StepLR(self.optimizer, 1, gamma=0.1)
-        # self.scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(self.optimizer, 2500)
 
         if self.p.effective_batch_size % self.p.max_train_batch_size == 0:
             self.accumulate_loss_n_times = self.p.effective_batch_size // self.p.max_train_batch_size
         else:
             self.accumulate_loss_n_times = self.p.effective_batch_size // self.p.max_train_batch_size + 1
 
-        self.strategy_types = ["random", "max", "increase_min", "reduce_deficit", "mixed_4"]
-        # self.strategy_types = ["random", "max", "increase_min", "reduce_deficit"]
+        self.strategy_types = ["random", "max", "increase_min", "reduce_deficit", "mixed"]
         self.writer = SummaryWriter(os.path.join(self.logs_dir, "tensorboard"))
+        print(f"Writing logs to: {self.logs_dir}")
 
     def get_new_network(self):
         net = get_network(self.config).to(self.device)
@@ -102,7 +98,7 @@ class SelfPlayTrainingSession:
     def save_model(self, filename):
         self.net.train()
         torch.save(self.net.state_dict(), filename)
-    
+
     def load_model(self, filename):
         self.net.load_state_dict(torch.load(filename, map_location=self.device))
         set_model_to_half(self.net)
@@ -157,15 +153,16 @@ class SelfPlayTrainingSession:
         while loss_invalid:
             for _ in range(self.accumulate_loss_n_times):
                 loss_invalid = False
-                inputs, labels, vis_inputs, idxs = self.replay_buffer.sample_training_minibatch()
+                inputs, labels = self.replay_buffer.sample_training_minibatch()
 
-                grid_input_device = torch.tensor(inputs[0], dtype=torch.float16, device=self.device)
+                grid_input_device = torch.tensor(inputs[0][0], dtype=torch.float16, device=self.device)
+                grid_vector_device = torch.tensor(inputs[0][1], dtype=torch.float16, device=self.device)
                 vector_input_device = torch.tensor(inputs[1], dtype=torch.float16, device=self.device)
 
                 labels[labels == 0] = -1
                 labels_device = torch.tensor(labels, dtype=torch.float16, device=self.device)
 
-                predictions = self.net(grid_input_device, vector_input_device)
+                predictions = self.net(grid_input_device, grid_vector_device, vector_input_device)
 
                 loss = self.loss_criterion(torch.squeeze(predictions), torch.squeeze(labels_device))
 
@@ -184,14 +181,14 @@ class SelfPlayTrainingSession:
 
         diffs = np.abs(labels_np - predictions_np)
         mean_abs_error = np.mean(diffs) 
-        return loss_np, mean_abs_error, (vis_inputs, labels_np, predictions_np)
+        return loss_np, mean_abs_error, (inputs, labels_np, predictions_np)
 
     def apply_n_learning_updates(self, n):
         self.net.train()
 
         loss_sum = 0.
         abs_error_sum = 0.
-        for i in range(int(n)):
+        for _ in range(int(n)):
             loss, abs_error, vis_inputs = self.apply_learning_update()
             loss_sum += loss
             abs_error_sum += abs_error
@@ -230,10 +227,11 @@ class SelfPlayTrainingSession:
         return p1_win_rate, avg_avg_loss, mean_abs_error
 
     def add_graph_to_logs(self):
-        inputs, _, _, _ = self.replay_buffer.sample_training_minibatch()
-        grid_input_device = torch.tensor(inputs[0], dtype=torch.float16, device=self.device)
+        inputs, _ = self.replay_buffer.sample_training_minibatch()
+        grid_input_device = torch.tensor(inputs[0][0], dtype=torch.float16, device=self.device)
+        grid_vector_device = torch.tensor(inputs[0][1], dtype=torch.float16, device=self.device)
         vector_input_device = torch.tensor(inputs[1], dtype=torch.float16, device=self.device)
-        self.writer.add_graph(self.net, (grid_input_device, vector_input_device))
+        self.writer.add_graph(self.net, (grid_input_device, grid_vector_device, vector_input_device))
 
     def train(self):
         self.initialise_rule_based_players()
@@ -305,8 +303,6 @@ class SelfPlayTrainingSession:
                 print("Reducing learning rate")
                 self.steps_since_improvement = 0
                 self.scheduler.step()
-
-            # self.scheduler.step()
 
             if i % int(self.p.test_every_n_steps) == 0:
                 self.save_model(self.latest_ckpt_path)

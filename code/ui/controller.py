@@ -4,7 +4,8 @@ import pygame as pg
 from pygame.locals import *
 
 from ui.display import Display
-from game.gameplay import get_gameplay, Move
+from ui.interface import Move, Response
+from game.gameplay import get_gameplay
 from game.tiles import flip_tile
 
 LOGO_PATH = '../imgs/logo.png'
@@ -321,29 +322,3 @@ class Controller:
             self.loop()
             self.render()
             self.clock.tick(10)
-
-class Response:
-    def __init__(self):
-        self.actions = []
-
-    def add_move_made(self, player, move):
-        action = {"player": player,
-                  "type": "move_made",
-                  "body": move}
-        self.actions.append(action)
-
-    def add_tiles_picked_up(self, player, tiles):
-        action = {"player": player,
-                  "type": "tiles_picked_up",
-                  "body": tiles}
-        self.actions.append(action)
-
-    # def add_update_deck(self, player, deck):
-    #     action = {"player": player,
-    #               "type": "update_deck",
-    #               "body": deck}
-    #     self.actions.append(action)
-
-    def action_iterator(self):
-        for action in self.actions:
-            yield action

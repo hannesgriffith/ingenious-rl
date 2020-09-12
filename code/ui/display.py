@@ -1,7 +1,5 @@
 from random import randint
 
-import numpy as np
-
 import pygame as pg
 from pygame.locals import *
 
@@ -10,8 +8,21 @@ from utils.loader import ImageLoader
 from game.tiles import flip_tile
 
 # background_colour = [100, 200, 100]
-background_colour = [240, 200, 240]
+# background_colour = [240, 200, 240]
 # background_colour = [randint(0, 255), randint(0, 255), randint(0, 255)]
+
+def generate_background_colour():
+    threshold = 10
+    range_ = [150, 200]
+    i, j, k = randint(*range_), randint(*range_), randint(*range_)
+    while abs(i - j) < threshold:
+        j = randint(*range_)
+    while abs(i - k) < threshold or abs(j - k) < threshold:
+        k = randint(*range_)
+    return [i, j, k]
+
+background_colour = generate_background_colour()
+
 deck_i_colour = (240, 240, 240)
 deck1_i_colour = (240, 240, 240)
 deck2_i_colour = (240, 240, 240)
@@ -256,8 +267,8 @@ class Display:
                 self.coords.scores[deck_num][idx + 1])
 
     def clear_move(self, move):
-        for hex in move.iterator():
-            x, y, colour = hex
+        for hex_ in move.iterator():
+            x, y, colour = hex_
             self.draw_hex_dark((x, y))
             self.draw_hex_tile((x, y), colour)
 

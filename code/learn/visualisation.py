@@ -2,42 +2,7 @@ import numpy as np
 from matplotlib import pyplot as plt
 from numba import njit
 
-def split_inputs(inputs):
-    grid_input, vector_input = inputs
-    b = vector_input.shape[0]
-
-    deck_repr = vector_input[:, : 2 * 6].reshape(b, 2, 6)
-    scores_repr = vector_input[:, 2 * 6 : 2 * 6 + 2 * 6].reshape(b, 2, 6)
-    general_repr = vector_input[:, 2 * 6 + 2 * 6 :].reshape(b, 5)
-
-    deck_repr *= 4.0
-    scores_repr *= 18.0
-    general_repr *= np.array(((1, 2, 1, 1, 40))).astype(np.float32)
-
-    board_repr = np.transpose(grid_input, (0, 2, 3, 1)) # NCHW -> NHWC
-    board_repr = board_repr.astype(np.int32)
-
-    return board_repr, deck_repr, scores_repr, general_repr
-
-def split_inputs2(inputs):
-    grid_input, vector_input = inputs
-    b = vector_input.shape[0]
-
-    board_repr2 = vector_input[:, : 8 * 6].reshape(b, 8, 6)
-    deck_repr = vector_input[:, 8 * 6 : 8 * 6 + 2 * 6].reshape(b, 2, 6)
-    scores_repr = vector_input[:, 8 * 6 + 2 * 6 : 8 * 6 + 2 * 6 + 3 * 6].reshape(b, 3, 6)
-    general_repr = vector_input[:, 8 * 6 + 2 * 6 + 3 * 6 :].reshape(b, 8)
-
-    board_repr2 *= np.array((21, 21, 45, 1, 9, 9, 9, 9)).reshape(1, 8, 1).astype(np.float32)
-    deck_repr *= 4.0
-    scores_repr *= 18.0
-    general_repr *= np.array(((1, 2, 1, 1, 40, 85, 45, 1))).astype(np.float32)
-
-    board_repr1 = grid_input.astype(np.int32)
-
-    return board_repr1, board_repr2, deck_repr, scores_repr, general_repr
-
-@njit
+@njit(cache=True)
 def get_playable_coords(offset=True):
     coords = np.array(((0, 4), (0, 5), (0, 6), (1, 2), (1, 3), (1, 4), (1, 5), (1, 6),
                     (1, 7), (1, 8), (2, 0), (2, 1), (2, 2), (2, 3), (2, 4), (2, 5),
@@ -51,7 +16,7 @@ def get_playable_coords(offset=True):
                     (7, 7), (7, 8), (7, 9), (7, 10), (8, 1), (8, 2), (8, 3), (8, 4),
                     (8, 5), (8, 6), (8, 7), (8, 8), (8, 9), (9, 3), (9, 4), (9, 5),
                     (9, 6), (9, 7), (10, 5)), dtype=np.float32)
-    
+
     if offset:
         for i in range(coords.shape[0]):
             if coords[i, 1] % 2 == 0:
@@ -59,39 +24,63 @@ def get_playable_coords(offset=True):
 
     return coords
 
-def get_playable_grid():
-    return np.array([
-        [0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0, 0, 0, 0,],
-        [0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0, 0, 0,],
-        [0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0, 0,],
-        [0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0,],
-        [0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0,],
-        [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1,],
-        [0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0,],
-        [0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0,],
-        [0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0, 0,],
-        [0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0, 0, 0,],
-        [0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0, 0, 0, 0,]
-        ], dtype=np.uint8).reshape(11, 21)
+def split_grid_inputs(i, n):
+    colour_states = i[:, :, :, :6].astype(np.int32)
+    playable = i[:, :, :, 9].astype(np.int32)
+    available = i[:, :, :, 10].astype(np.int32)
 
-# @njit
-# def grid_to_coords(grid):
-#     idxs = np.where(grid == 1)
-#     num = idxs[0].shape[0]
+    scores = i[:, :, :, 10:10+24].reshape(n, 11 + 2, 21 + 4, 4, 6)
+    scores *= np.array((5, 5, 5, 9)).reshape(1, 1, 1, 4, 1).astype(np.float32)
+    max_total_score = np.max(scores[:, :, :, 3, :], axis=3).astype(np.int32)
 
-#     xs, ys = [], []
-#     for n in range(num):
-#         i = idxs[0][n]
-#         j = idxs[1][n]
+    return (colour_states, playable, available, max_total_score)
 
-#         xs.append(j / 2.)
-#         ys.append(i)
+def split_vector_inputs(i, n):
+    num_playable = i[:, 0]
+    num_playable = (num_playable * 85.).astype(np.int32)
 
-#     return (xs, ys)
+    num_available = i[:, 1]
+    num_available = (num_available * 21.).astype(np.int32)
 
-@njit
+    idx = 2
+    colour_counts = i[:, idx:idx+6]
+    colour_counts = (colour_counts * 21.).astype(np.int32)
+
+    idx += 6
+    score_counts = i[:, idx:idx+((3+8)*6)].reshape(n, 3 + 8, 6)
+    factors = np.array((21, 45, 45, 9, 9, 9, 9, 9, 9, 9, 9), dtype=np.float32)
+    score_counts *= factors.reshape(1, 3 + 8, 1)
+    score_counts = score_counts.astype(np.int32)
+
+    # scoring_count = score_counts[:, 0, :]
+    # total_scores = score_counts[:, 1, :]
+    # non_scoring = score_counts[:, 2, :]
+    # top_scores = score_counts[:, 3:, :]
+
+    idx += (3+8)*6
+    deck_repr = i[:, idx:idx+(2*6)].reshape(n, 2, 6)
+    deck_repr = (deck_repr * 4.).astype(np.int32)
+
+    idx += 2*6
+    scores_repr = i[:, idx:idx+(3*6)].reshape(n, 3, 6)
+    scores_repr = (scores_repr * 18.).astype(np.int32)
+
+    idx += 3*6
+    general_repr = i[:, idx:]
+    general_repr *= np.array(((1, 2, 1, 1, 40))).astype(np.float32)
+    general_repr = general_repr.astype(np.int32)
+
+    return (num_playable, num_available, colour_counts, score_counts, deck_repr, scores_repr, general_repr)
+
+def split_inputs(inputs, n):
+    (grid_inputs, _), vector_inputs = inputs
+    vis_grid_inputs = split_grid_inputs(grid_inputs[:n], n)
+    vis_vector_inputs = split_vector_inputs(vector_inputs[:n], n)
+    return vis_grid_inputs, vis_vector_inputs
+
+@njit(cache=True)
 def grid_to_coords(grid):
-    idxs = np.where(grid == 1)
+    idxs = np.where(grid.astype(np.uint8) == 1)
     num = idxs[0].shape[0]
 
     xs, ys = [], []
@@ -106,27 +95,27 @@ def grid_to_coords(grid):
 
     return (xs, ys)
 
-# @njit
-# def grid_to_coords_playable(grid):
-#     idxs = np.where(grid == 1)
-#     playable = get_playable_coords(offset=False).astype(np.uint8)
-#     num = idxs[0].shape[0]
+@njit(cache=True)
+def preproces_mask_total_score(max_total_score):
+    idxs = np.where(max_total_score.astype(np.int32) > 0)
+    num = idxs[0].shape[0]
 
-#     xs, ys = [], []
-#     for i in range(num):
-#         x = idxs[0][i]
-#         y = idxs[1][i]
+    max_total_score_vals = []
+    xs, ys = [], []
+    for i in range(num):
+        x = idxs[0][i]
+        y = idxs[1][i]
 
-#         for j in range(playable.shape[0]):
-#             p1, p2 = playable[j]
-#             if int(x) == int(p1) and int(y) == int(p2):
-#                 if y % 2 == 0:
-#                     x += 0.5
-#                 xs.append(x)
-#                 ys.append(y)
-#                 break
+        max_total_score_val = max_total_score[x, y]
+        max_total_score_vals.append(str(int(max_total_score_val)))
 
-#     return (xs, ys)
+        if y % 2 == 0:
+            x += 0.5
+        xs.append(x)
+        ys.append(y)
+
+    max_total_score_coords = (xs, ys)
+    return max_total_score_coords, max_total_score_vals
 
 def draw_coloured_numbers(numbers, start_x, start_y):
     colours = ["red", "darkorange", "gold", "forestgreen", "royalblue", "darkviolet"]
@@ -135,110 +124,36 @@ def draw_coloured_numbers(numbers, start_x, start_y):
         font = {'family': 'serif', 'color':  colours[i], 'weight': 'normal', 'size': 12,}
         plt.text(start_x + 0.1 * i, start_y, f'{numbers[i]}', fontdict=font)
 
-# def generate_debug_visualisation(vis_inputs):
-#     inputs, labels, preds = vis_inputs # (4,), b, b
-#     board_repr, deck_repr, scores_repr, general_repr = split_inputs(inputs)
+def generate_debug_visualisation(vis_inputs, num=4):
+    inputs, labels, preds = vis_inputs
+    vis_grid_inputs, vis_vector_inputs = split_inputs(inputs, num)
 
-#     # board_repr = inputs[0]      # b x 11 x 11 x 8
-#     # deck_repr = inputs[1]       # b x 2 x 6
-#     # scores_repr = inputs[2]     # b x 2 x 6
-#     # general_repr = inputs[3]    # b x 5
-
-#     labels = labels.astype(np.float)
-#     labels[labels == 0] = -1
-
-#     num = 4
-#     playable = get_playable_coords()
-
-#     fig = plt.figure(figsize=(12, 4 * num))
-#     for i in range(num):
-#         red = grid_to_coords(board_repr[i, :, :, 0])
-#         orange = grid_to_coords(board_repr[i, :, :, 1])
-#         yellow = grid_to_coords(board_repr[i, :, :, 2])
-#         green = grid_to_coords(board_repr[i, :, :, 3])
-#         blue = grid_to_coords(board_repr[i, :, :, 4])
-#         purple = grid_to_coords(board_repr[i, :, :, 5])
-#         occupied = grid_to_coords(board_repr[i, :, :, 6] * get_playable_grid())
-#         available = grid_to_coords(board_repr[i, :, :, 7])
-
-#         your_score = scores_repr[i, 0, :].astype(np.uint8)
-#         other_score = scores_repr[i, 1, :].astype(np.uint8)
-#         tiles_single = deck_repr[i, 0, :].astype(np.uint8)
-#         tiles_double = deck_repr[i, 1, :].astype(np.uint8)
-#         general_repr = general_repr.astype(np.uint8)
-
-#         plt.subplot(num, 3, i * 3 + 1)
-#         plt.scatter(playable[:, 0], playable[:, 1], c='lightgrey')
-#         plt.scatter(occupied[0], occupied[1], s=50, c='grey')
-#         plt.axis('off')
-
-#         plt.subplot(num, 3, i * 3 + 2)
-#         plt.scatter(playable[:, 0], playable[:, 1], c='lightgrey')
-#         plt.scatter(red[0], red[1], s=80, c='red')
-#         plt.scatter(orange[0], orange[1], s=80, c='darkorange')
-#         plt.scatter(yellow[0], yellow[1], s=80, c='gold')
-#         plt.scatter(green[0], green[1], s=80, c='forestgreen')
-#         plt.scatter(blue[0], blue[1], s=80, c='royalblue')
-#         plt.scatter(purple[0], purple[1], s=80, c='darkviolet')
-#         plt.scatter(available[0], available[1], facecolors='none', edgecolors='dimgrey')
-#         plt.axis('off')
-
-#         plt.subplot(num, 3, i * 3 + 3)
-#         font = {'family': 'serif', 'color':  'black', 'weight': 'normal', 'size': 12}
-#         plt.text(0, 0.95, f'Your score:', fontdict=font)
-#         plt.text(0, 0.85, f'Other score:', fontdict=font)
-#         plt.text(0, 0.7, f'Single tiles:', fontdict=font)
-#         plt.text(0, 0.6, f'Double tiles:', fontdict=font)
-#         plt.text(0, 0.45, f'Ingenious / num ingenious: {general_repr[i, 0]} / {general_repr[i, 1]}', fontdict=font)
-#         plt.text(0, 0.35, f'Can / should exchange:       {general_repr[i, 2]} / {general_repr[i, 3]}', fontdict=font)
-#         plt.text(0, 0.25, f'Move number:                     {general_repr[i, 4]}', fontdict=font)
-#         plt.text(0, 0.1, 'Win label: {:.2f}'.format(labels[i]), fontdict=font)
-#         plt.text(0, 0.0, 'Win pred: {:.2f}'.format(preds[i]), fontdict=font)
-#         draw_coloured_numbers(your_score, 0.5, 0.95)
-#         draw_coloured_numbers(other_score, 0.5, 0.85)
-#         draw_coloured_numbers(tiles_single, 0.5, 0.7)
-#         draw_coloured_numbers(tiles_double, 0.5, 0.6)
-#         plt.axis('off')
-
-#     return fig
-
-def generate_debug_visualisation(vis_inputs):
-    inputs, labels, preds = vis_inputs # (4,), b, b
-    board_repr1, board_repr2, deck_repr, scores_repr, general_repr = split_inputs2(inputs)
+    colour_states, _, available_grid, max_total_score = vis_grid_inputs
+    num_playable, num_available, colour_counts, score_counts, deck_repr, scores_repr, general_repr = vis_vector_inputs
 
     labels = labels.astype(np.float)
     labels[labels == 0] = -1
 
-    num = 4
     playable = get_playable_coords()
 
-    fig = plt.figure(figsize=(12, 4 * num))
+    fig = plt.figure(figsize=(16, 4 * num))
     for i in range(num):
-        red = grid_to_coords(board_repr1[i, :, :, 0])
-        orange = grid_to_coords(board_repr1[i, :, :, 1])
-        yellow = grid_to_coords(board_repr1[i, :, :, 2])
-        green = grid_to_coords(board_repr1[i, :, :, 3])
-        blue = grid_to_coords(board_repr1[i, :, :, 4])
-        purple = grid_to_coords(board_repr1[i, :, :, 5])
-        available = grid_to_coords(board_repr1[i, :, :, 7])
+        red = grid_to_coords(colour_states[i, :, :, 0])
+        orange = grid_to_coords(colour_states[i, :, :, 1])
+        yellow = grid_to_coords(colour_states[i, :, :, 2])
+        green = grid_to_coords(colour_states[i, :, :, 3])
+        blue = grid_to_coords(colour_states[i, :, :, 4])
+        purple = grid_to_coords(colour_states[i, :, :, 5])
+        available = grid_to_coords(available_grid[i])
+        # max_total_score_coords, max_total_score_vals = preproces_mask_total_score(max_total_score[i])
 
         your_score = scores_repr[i, 0, :].astype(np.int32)
         other_score = scores_repr[i, 1, :].astype(np.int32)
         scores_diff = scores_repr[i, 2, :].astype(np.int32)
         tiles_single = deck_repr[i, 0, :].astype(np.int32)
         tiles_double = deck_repr[i, 1, :].astype(np.int32)
-        general_repr = general_repr.astype(np.int32)
 
-        colour_counts = board_repr2[i, 0, :].astype(np.int32)
-        available_counts = board_repr2[i, 1, :].astype(np.int32)
-        total_scores = board_repr2[i, 2, :].astype(np.int32)
-        no_scoring = board_repr2[i, 3, :].astype(np.int32)
-        max_score_1 = board_repr2[i, 4, :].astype(np.int32)
-        max_score_2 = board_repr2[i, 5, :].astype(np.int32)
-        max_score_3 = board_repr2[i, 6, :].astype(np.int32)
-        max_score_4 = board_repr2[i, 7, :].astype(np.int32)
-
-        plt.subplot(num, 3, i * 3 + 1)
+        plt.subplot(num, 4, i * 4 + 1)
         plt.scatter(playable[:, 0], playable[:, 1], c='lightgrey')
         plt.scatter(red[0], red[1], s=80, c='red')
         plt.scatter(orange[0], orange[1], s=80, c='darkorange')
@@ -247,46 +162,62 @@ def generate_debug_visualisation(vis_inputs):
         plt.scatter(blue[0], blue[1], s=80, c='royalblue')
         plt.scatter(purple[0], purple[1], s=80, c='darkviolet')
         plt.scatter(available[0], available[1], facecolors='none', edgecolors='dimgrey')
+        # plt.annotate(max_total_score_vals, (max_total_score_coords[0], max_total_score_coords[1]), textcoords="offset points", xytext=(0, 0), ha='center')
         plt.axis('off')
 
-        plt.subplot(num, 3, i * 3 + 2)
+        plt.subplot(num, 4, i * 4 + 2)
         font = {'family': 'serif', 'color':  'black', 'weight': 'normal', 'size': 12}
         plt.text(0, 1.0, f'Your score:', fontdict=font)
         plt.text(0, 0.9, f'Other score:', fontdict=font)
         plt.text(0, 0.8, 'Score diff:', fontdict=font)
-        plt.text(0, 0.65, f'Single tiles:', fontdict=font)
-        plt.text(0, 0.55, f'Double tiles:', fontdict=font)
-        plt.text(0, 0.4, f'Ingenious / num ingenious: {general_repr[i, 0]} / {general_repr[i, 1]}', fontdict=font)
-        plt.text(0, 0.3, f'Can / should exchange:       {general_repr[i, 2]} / {general_repr[i, 3]}', fontdict=font)
-        plt.text(0, 0.2, f'Move # / # unoccupied:      {general_repr[i, 4]} / {general_repr[i, 5]}', fontdict=font)
-        plt.text(0, 0.1, f'# available / none?:             {general_repr[i, 6]} / {general_repr[i, 7]}', fontdict=font)
+        plt.text(0, 0.6, f'Single tiles:', fontdict=font)
+        plt.text(0, 0.5, f'Double tiles:', fontdict=font)
+        plt.text(0, 0.3, 'Colour counts:', fontdict=font)
+        plt.text(0, 0.2, 'Scoring counts:', fontdict=font)
         draw_coloured_numbers(your_score, 0.55, 1.0)
         draw_coloured_numbers(other_score, 0.55, 0.9)
         draw_coloured_numbers(scores_diff, 0.55, 0.8)
-        draw_coloured_numbers(tiles_single, 0.55, 0.65)
-        draw_coloured_numbers(tiles_double, 0.55, 0.55)
+        draw_coloured_numbers(tiles_single, 0.55, 0.6)
+        draw_coloured_numbers(tiles_double, 0.55, 0.5)
+        draw_coloured_numbers(colour_counts[i], 0.55, 0.3)
+        draw_coloured_numbers(score_counts[i, 0, :], 0.55, 0.2)
         plt.axis('off')
 
-        plt.subplot(num, 3, i * 3 + 3)
+        plt.subplot(num, 4, i * 4 + 3)
         font = {'family': 'serif', 'color':  'black', 'weight': 'normal', 'size': 12}
-        plt.text(0, 1.0, 'Colour counts:', fontdict=font)
-        plt.text(0, 0.9, 'Available counts:', fontdict=font)
-        plt.text(0, 0.8, 'Total scores:', fontdict=font)
-        plt.text(0, 0.7, 'Total scores = 0:', fontdict=font)
-        plt.text(0, 0.55, 'Max score 1:', fontdict=font)
-        plt.text(0, 0.45, 'Max score 2:', fontdict=font)
-        plt.text(0, 0.35, 'Max score 3:', fontdict=font)
-        plt.text(0, 0.25, 'Max score 4:', fontdict=font)
-        plt.text(0, 0.1, 'Win pred: {:.2f}'.format(preds[i]), fontdict=font)
-        plt.text(0, 0.0, 'Win label: {:.2f}'.format(labels[i]), fontdict=font)
-        draw_coloured_numbers(colour_counts, 0.55, 1.0)
-        draw_coloured_numbers(available_counts, 0.55, 0.9)
-        draw_coloured_numbers(total_scores, 0.55, 0.8)
-        draw_coloured_numbers(no_scoring, 0.55, 0.7)
-        draw_coloured_numbers(max_score_1, 0.55, 0.55)
-        draw_coloured_numbers(max_score_2, 0.55, 0.45)
-        draw_coloured_numbers(max_score_3, 0.55, 0.35)
-        draw_coloured_numbers(max_score_4, 0.55, 0.25)
+        plt.text(0, 1.0, 'Total scores:', fontdict=font)
+        plt.text(0, 0.9, 'Total scores = 0:', fontdict=font)
+        plt.text(0, 0.7, 'Max score 1:', fontdict=font)
+        plt.text(0, 0.6, 'Max score 2:', fontdict=font)
+        plt.text(0, 0.5, 'Max score 3:', fontdict=font)
+        plt.text(0, 0.4, 'Max score 4:', fontdict=font)
+        plt.text(0, 0.3, 'Max score 5:', fontdict=font)
+        plt.text(0, 0.2, 'Max score 6:', fontdict=font)
+        plt.text(0, 0.1, 'Max score 7:', fontdict=font)
+        plt.text(0, 0.0, 'Max score 8:', fontdict=font)
+        draw_coloured_numbers(score_counts[i, 1, :], 0.55, 1.0)
+        draw_coloured_numbers(score_counts[i, 2, :], 0.55, 0.9)
+        draw_coloured_numbers(score_counts[i, 3, :], 0.55, 0.7)
+        draw_coloured_numbers(score_counts[i, 4, :], 0.55, 0.6)
+        draw_coloured_numbers(score_counts[i, 5, :], 0.55, 0.5)
+        draw_coloured_numbers(score_counts[i, 6, :], 0.55, 0.4)
+        draw_coloured_numbers(score_counts[i, 7, :], 0.55, 0.3)
+        draw_coloured_numbers(score_counts[i, 8, :], 0.55, 0.2)
+        draw_coloured_numbers(score_counts[i, 9, :], 0.55, 0.1)
+        draw_coloured_numbers(score_counts[i, 10, :], 0.55, 0.0)
+        plt.axis('off')
+
+        plt.subplot(num, 4, i * 4 + 4)
+        font = {'family': 'serif', 'color':  'black', 'weight': 'normal', 'size': 12}
+        plt.text(0, 1.0, f'Num playable:  {num_playable[i]}', fontdict=font)
+        plt.text(0, 0.9, f'Num available: {num_available[i]}', fontdict=font)
+        plt.text(0, 0.8, f'Ingenious: {general_repr[i, 0]}', fontdict=font)
+        plt.text(0, 0.7, f'# ingenious: {general_repr[i, 1]}', fontdict=font)
+        plt.text(0, 0.6, f'Can exchange:       {general_repr[i, 2]}', fontdict=font)
+        plt.text(0, 0.5, f'Should exchange:       {general_repr[i, 3]}', fontdict=font)
+        plt.text(0, 0.4, f'Move #:      {general_repr[i, 4]}', fontdict=font)
+        plt.text(0, 0.2, 'Win pred: {:.2f}'.format(preds[i]), fontdict=font)
+        plt.text(0, 0.1, 'Win label: {:.2f}'.format(labels[i]), fontdict=font)
         plt.axis('off')
 
     return fig
