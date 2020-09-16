@@ -26,7 +26,7 @@ class MLP(nn.Module):
     def __init__(self):
         super().__init__()
         self.num_input_channels = input_channels["vector"]
-        self.num_hidden_units = 64
+        self.num_hidden_units = 128
 
         self.mlp = nn.Sequential(
             nn.Linear(self.num_input_channels, self.num_hidden_units),

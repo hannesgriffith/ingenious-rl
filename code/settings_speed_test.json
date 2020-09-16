@@ -7,7 +7,7 @@
     "2": {
         "name": "P2",
         "player_type": "computer",
-        "strategy_type": "max"
+        "strategy_type": "mixed"
     },
     "game_type": "training"
 }

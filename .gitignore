@@ -4,6 +4,7 @@
 
 code/logs/*
 .vscode
+.DS_Store
 
 ### Linux ###
 *~

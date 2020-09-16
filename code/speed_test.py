@@ -10,7 +10,7 @@ from game.player import get_player
 from learn.strategy import get_strategy_types
 
 INPUT_SETTINGS = 'settings_speed_test.json'
-N_GAMES = 100
+N_GAMES = 1000
 
 def play_game(gameplay, params):
     strat_1, strat_2 = get_strategy_types(params)

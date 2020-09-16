@@ -48,14 +48,9 @@ def split_vector_inputs(i, n):
 
     idx += 6
     score_counts = i[:, idx:idx+((3+8)*6)].reshape(n, 3 + 8, 6)
-    factors = np.array((21, 45, 45, 9, 9, 9, 9, 9, 9, 9, 9), dtype=np.float32)
+    factors = np.array((21, 45, 1, 9, 9, 9, 9, 9, 9, 9, 9), dtype=np.float32)
     score_counts *= factors.reshape(1, 3 + 8, 1)
     score_counts = score_counts.astype(np.int32)
-
-    # scoring_count = score_counts[:, 0, :]
-    # total_scores = score_counts[:, 1, :]
-    # non_scoring = score_counts[:, 2, :]
-    # top_scores = score_counts[:, 3:, :]
 
     idx += (3+8)*6
     deck_repr = i[:, idx:idx+(2*6)].reshape(n, 2, 6)
@@ -74,13 +69,14 @@ def split_vector_inputs(i, n):
 
 def split_inputs(inputs, n):
     (grid_inputs, _), vector_inputs = inputs
+    grid_inputs = np.transpose(grid_inputs, (0, 2, 3, 1)) # NCHW -> NHWC
     vis_grid_inputs = split_grid_inputs(grid_inputs[:n], n)
     vis_vector_inputs = split_vector_inputs(vector_inputs[:n], n)
     return vis_grid_inputs, vis_vector_inputs
 
 @njit(cache=True)
 def grid_to_coords(grid):
-    idxs = np.where(grid.astype(np.uint8) == 1)
+    idxs = np.where(grid.T.astype(np.uint8) == 1)
     num = idxs[0].shape[0]
 
     xs, ys = [], []
@@ -88,34 +84,10 @@ def grid_to_coords(grid):
         x = idxs[0][i]
         y = idxs[1][i]
 
-        if y % 2 == 0:
-            x += 0.5
-        xs.append(x)
+        xs.append(x / 2)
         ys.append(y)
 
     return (xs, ys)
-
-@njit(cache=True)
-def preproces_mask_total_score(max_total_score):
-    idxs = np.where(max_total_score.astype(np.int32) > 0)
-    num = idxs[0].shape[0]
-
-    max_total_score_vals = []
-    xs, ys = [], []
-    for i in range(num):
-        x = idxs[0][i]
-        y = idxs[1][i]
-
-        max_total_score_val = max_total_score[x, y]
-        max_total_score_vals.append(str(int(max_total_score_val)))
-
-        if y % 2 == 0:
-            x += 0.5
-        xs.append(x)
-        ys.append(y)
-
-    max_total_score_coords = (xs, ys)
-    return max_total_score_coords, max_total_score_vals
 
 def draw_coloured_numbers(numbers, start_x, start_y):
     colours = ["red", "darkorange", "gold", "forestgreen", "royalblue", "darkviolet"]
@@ -128,8 +100,11 @@ def generate_debug_visualisation(vis_inputs, num=4):
     inputs, labels, preds = vis_inputs
     vis_grid_inputs, vis_vector_inputs = split_inputs(inputs, num)
 
-    colour_states, _, available_grid, max_total_score = vis_grid_inputs
+    colour_states, _, available_grid, _ = vis_grid_inputs
     num_playable, num_available, colour_counts, score_counts, deck_repr, scores_repr, general_repr = vis_vector_inputs
+
+    colour_states = colour_states[:, 1:-1, 2:-2, :]
+    available_grid = available_grid[:, 1:-1, 2:-2]
 
     labels = labels.astype(np.float)
     labels[labels == 0] = -1
@@ -145,7 +120,6 @@ def generate_debug_visualisation(vis_inputs, num=4):
         blue = grid_to_coords(colour_states[i, :, :, 4])
         purple = grid_to_coords(colour_states[i, :, :, 5])
         available = grid_to_coords(available_grid[i])
-        # max_total_score_coords, max_total_score_vals = preproces_mask_total_score(max_total_score[i])
 
         your_score = scores_repr[i, 0, :].astype(np.int32)
         other_score = scores_repr[i, 1, :].astype(np.int32)
@@ -162,7 +136,6 @@ def generate_debug_visualisation(vis_inputs, num=4):
         plt.scatter(blue[0], blue[1], s=80, c='royalblue')
         plt.scatter(purple[0], purple[1], s=80, c='darkviolet')
         plt.scatter(available[0], available[1], facecolors='none', edgecolors='dimgrey')
-        # plt.annotate(max_total_score_vals, (max_total_score_coords[0], max_total_score_coords[1]), textcoords="offset points", xytext=(0, 0), ha='center')
         plt.axis('off')
 
         plt.subplot(num, 4, i * 4 + 2)
@@ -211,10 +184,10 @@ def generate_debug_visualisation(vis_inputs, num=4):
         font = {'family': 'serif', 'color':  'black', 'weight': 'normal', 'size': 12}
         plt.text(0, 1.0, f'Num playable:  {num_playable[i]}', fontdict=font)
         plt.text(0, 0.9, f'Num available: {num_available[i]}', fontdict=font)
-        plt.text(0, 0.8, f'Ingenious: {general_repr[i, 0]}', fontdict=font)
+        plt.text(0, 0.8, f'Ingenious:   {general_repr[i, 0]}', fontdict=font)
         plt.text(0, 0.7, f'# ingenious: {general_repr[i, 1]}', fontdict=font)
-        plt.text(0, 0.6, f'Can exchange:       {general_repr[i, 2]}', fontdict=font)
-        plt.text(0, 0.5, f'Should exchange:       {general_repr[i, 3]}', fontdict=font)
+        plt.text(0, 0.6, f'Can exchange:     {general_repr[i, 2]}', fontdict=font)
+        plt.text(0, 0.5, f'Should exchange:  {general_repr[i, 3]}', fontdict=font)
         plt.text(0, 0.4, f'Move #:      {general_repr[i, 4]}', fontdict=font)
         plt.text(0, 0.2, 'Win pred: {:.2f}'.format(preds[i]), fontdict=font)
         plt.text(0, 0.1, 'Win label: {:.2f}'.format(labels[i]), fontdict=font)

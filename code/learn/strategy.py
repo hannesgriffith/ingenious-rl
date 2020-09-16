@@ -3,11 +3,11 @@ from copy import deepcopy
 from numba import njit
 import numpy as np
 import torch
-import torch.nn as nn
 
 from game.board import combine_moves_and_deck
-from game.utils import get_other_player, find_winner_fast
+from game.game_utils import get_other_player, find_winner_fast
 from learn.network import get_network
+from learn.train_utils import set_model_to_half
 
 def get_strategy(strategy_type, params=None):
     if strategy_type == "random":
@@ -41,16 +41,9 @@ def get_strategy_types(params):
 
     return strategy_type_1, strategy_type_2
 
-def set_model_to_half(model):
-    model.half()
-    for layer in model.modules():
-        if isinstance(layer, nn.BatchNorm2d):
-            layer.float()
-
 def choose_random_move(board, deck):
     move_combinations = board.get_possible_moves()
     possible_moves = combine_moves_and_deck(move_combinations, deck.get_deck())
-    print(possible_moves.shape)
     random_idx = np.random.randint(0, high=possible_moves.shape[0] - 1)
     return possible_moves[random_idx]
 
@@ -63,9 +56,6 @@ def choose_max_scoring_move(board, deck, score):
     scores_diff = updated_scores - original_score
     total_scores_diff = np.sum(scores_diff, axis=1)
     max_index = np.argmax(total_scores_diff)
-
-    # board.batch_generate_state_representations(possible_moves)
-
     return possible_moves[max_index]
 
 def choose_increase_min_move(board, deck, score):

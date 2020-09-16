@@ -1,7 +1,7 @@
 from numba import njit, prange
 import numpy as np
 
-from game.utils import get_other_player
+from game.game_utils import get_other_player
 from learn.strategy import get_strategy
 
 def get_player(player_type, board, strategy_type, params=None):

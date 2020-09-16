@@ -1,6 +1,5 @@
 import os
 import time
-import json
 import argparse
 from itertools import product
 from shutil import copyfile
@@ -9,8 +8,8 @@ import numpy as np
 from tqdm import tqdm
 
 import torch
-import torch.nn as nn
-import torch.optim as optim
+from torch import nn
+from torch import optim
 from torch.utils.tensorboard import SummaryWriter
 
 from utils.io import load_json, write_json, make_dir_if_not_exists
@@ -21,15 +20,7 @@ from learn.network import get_network
 from learn.replay_buffer import ReplayBuffer
 from learn.representation import RepresentationGenerator
 from learn.visualisation import generate_debug_visualisation
-
-def count_parameters(model):
-    return sum(p.numel() for p in model.parameters() if p.requires_grad)
-
-def set_model_to_half(model):
-    model.half()
-    for layer in model.modules():
-        if isinstance(layer, nn.BatchNorm2d):
-            layer.float()
+from learn.train_utils import set_model_to_half, set_optimizer_learning_rate
 
 class Params: 
     def __init__(self, d):
@@ -40,7 +31,7 @@ class Params:
         write_json(output_path, self.__dict__)
 
 class SelfPlayTrainingSession:
-    def __init__(self, args, config):
+    def __init__(self, config):
         self.config = config
         self.p = Params(self.config)
         self.game = get_gameplay(self.config)
@@ -70,16 +61,14 @@ class SelfPlayTrainingSession:
         self.net = self.get_new_network()
         print("Training using device:", self.device)
 
-        # self.p.initial_learning_rate = 0.1
         self.optimizer = optim.SGD(
             self.net.parameters(),
             lr=self.p.initial_learning_rate,
             momentum=0.9,
             weight_decay=self.p.weight_decay,
             )
+        self.lr_tracker = self.p.initial_learning_rate
         self.loss_criterion = nn.MSELoss(reduction='mean')
-
-        self.scheduler = optim.lr_scheduler.StepLR(self.optimizer, 1, gamma=0.1)
 
         if self.p.effective_batch_size % self.p.max_train_batch_size == 0:
             self.accumulate_loss_n_times = self.p.effective_batch_size // self.p.max_train_batch_size
@@ -124,7 +113,7 @@ class SelfPlayTrainingSession:
         self.steps_since_improvement = state["steps_since_improvement"]
         self.best_self_model_step = state["best_self_model_step"]
         self.best_rule_model_step = state["best_rule_model_step"]
-        # self.p.initial_learning_rate = state["learning_rate"]
+        self.lr_tracker = state["learning_rate"]
 
     def log_network_weights_hists(self, step):
         for name, params in self.net.named_parameters():
@@ -226,6 +215,29 @@ class SelfPlayTrainingSession:
         mean_abs_error = abs_error_sum / float(n)
         return p1_win_rate, avg_avg_loss, mean_abs_error
 
+    def step_learning_rate_scheduling(self, improved=True, elapsed_steps=0):
+        self.steps_since_improvement += elapsed_steps
+
+        if improved:
+            self.steps_since_improvement = 0
+            print("Model improved...")
+            if self.lr_tracker < self.p.restart_learning_rate:
+                self.lr_tracker = self.p.restart_learning_rate
+                print(f"Increasing learning rate to {self.lr_tracker}")
+                set_optimizer_learning_rate(self.optimizer, self.lr_tracker)
+        else:
+            if self.steps_since_improvement >= int(self.p.reduce_lr_step_threshold):
+                print(f"No improvement in {self.p.reduce_lr_step_threshold} steps...")
+                self.lr_tracker *= 0.1
+                print(f"Reducing learning rate to {self.lr_tracker}")
+                set_optimizer_learning_rate(self.optimizer, self.lr_tracker)
+
+        finish_training = False
+        if self.lr_tracker < self.p.lowest_learning_rate:
+            finish_training = True
+
+        return finish_training
+
     def add_graph_to_logs(self):
         inputs, _ = self.replay_buffer.sample_training_minibatch()
         grid_input_device = torch.tensor(inputs[0][0], dtype=torch.float16, device=self.device)
@@ -249,6 +261,7 @@ class SelfPlayTrainingSession:
             load_ckpt_path = os.path.join(self.p.restore_ckpt_dir, "latest.pth")
             self.load_model(load_ckpt_path)
             self.load_optimiser(self.p.restore_ckpt_dir)
+            set_optimizer_learning_rate(self.optimizer, self.lr_tracker)
 
         self.save_model(self.latest_ckpt_path)
 
@@ -273,6 +286,7 @@ class SelfPlayTrainingSession:
 
         running_loss, running_error = 0.0, 0.0
         best_win_rate_rule = 0.0
+        training_finished = False
         self.add_graph_to_logs()
 
         print("Start training")
@@ -299,11 +313,6 @@ class SelfPlayTrainingSession:
                 vis_figs = generate_debug_visualisation(vis_inputs)
                 self.writer.add_figure('examples', vis_figs, global_step=i)
 
-            if i > 0 and self.steps_since_improvement >= int(self.p.reduce_lr_step_threshold):
-                print("Reducing learning rate")
-                self.steps_since_improvement = 0
-                self.scheduler.step()
-
             if i % int(self.p.test_every_n_steps) == 0:
                 self.save_model(self.latest_ckpt_path)
                 copyfile(self.latest_ckpt_path, os.path.join(self.logs_dir, f"ckpt-{i}.pth"))
@@ -321,9 +330,11 @@ class SelfPlayTrainingSession:
                     self.training_p2.strategy.load_model(self.latest_ckpt_path)
                     copyfile(self.latest_ckpt_path, self.best_self_ckpt_path)
                     self.best_self_model_step = i
-                    self.steps_since_improvement = 0
+                    model_improved = True
                 else:
-                    self.steps_since_improvement += self.p.test_every_n_steps
+                    model_improved = False
+
+                training_finished = self.step_learning_rate_scheduling(improved=model_improved, elapsed_steps=self.p.test_every_n_steps)
 
                 win_rate_rule = 0.0
                 for strat in self.strategy_types:
@@ -341,6 +352,10 @@ class SelfPlayTrainingSession:
 
                 self.save_training_state()
 
+            if training_finished:
+                print(f"Training finished after {i} steps...")
+                break
+
         print(f"Final best self model was at step {self.best_self_model_step}")
         print(f"Final best rule model was at step {self.best_rule_model_step}")
         self.writer.close()
@@ -354,7 +369,7 @@ def parse_args():
 def main():
     args = parse_args()
     config = load_json(args.config_name)
-    SelfPlayTrainingSession(args, config).train()
+    SelfPlayTrainingSession(config).train()
 
 if __name__ == "__main__":
     main()

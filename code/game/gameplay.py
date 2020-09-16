@@ -3,7 +3,7 @@ import numpy as np
 from game.board import Board
 from game.tiles import Tiles
 from game.player import get_player, Deck, Score
-from game.utils import get_other_player, find_winner_fast, add_values_for_episode
+from game.game_utils import get_other_player, find_winner_fast, add_values_for_episode
 from learn.strategy import get_strategy_types
 from learn.representation import RepresentationGenerator, RepresentationsBuffer
 from ui.interface import Request, display_to_game_tiles

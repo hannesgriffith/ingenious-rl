@@ -1,7 +1,7 @@
 from numba import njit, prange
 import numpy as np
 
-from game.utils import fast_initialise_playable, fast_initialise_start_playable, fast_initialise_areas
+from game.game_utils import fast_initialise_playable, fast_initialise_start_playable, fast_initialise_areas
 
 class Board:
     def __init__(self):
@@ -26,7 +26,6 @@ class Board:
 
     def initialise_available(self):
         self.available = np.zeros((self.height + 2, self.width + 4), dtype=np.uint8)
-        self.last_available = np.zeros((self.height + 2, self.width + 4), dtype=np.uint8)
         self.update_available_for_hexes(self.start_hexes)
 
     def update_available_for_hexes(self, hexes):
@@ -196,41 +195,43 @@ def fast_remove_duplicates(moves):
 
 @njit(cache=True)
 def fast_update_playable_for_hex(playable, coords, neighbour_offsets):
-    i1, j1 = coords
-    playable[i1, j1] = 0
+    i0, j0 = coords
+    playable[i0, j0] = 0
 
     for idx_1 in range(6):
         di1, dj1 = neighbour_offsets[idx_1]
-        i2 = i1 + di1
-        j2 = j1 + dj1
-        if playable[i2, j2] == 0:
-            continue
+        i1 = i0 + di1
+        j1 = j0 + dj1
 
-        has_neighbours = False
-        for idx_2 in range(6):
-            di2, dj2 = neighbour_offsets[idx_2]
-            i3 = i2 + di2
-            j3 = j2 + dj2
-            if playable[i3, j3] == 1:
-                has_neighbours = True
-                break
+        if playable[i1, j1] == 1:
+            has_neighbours = False
 
-        if not has_neighbours:
-            playable[i2, j2] = 0
+            for idx_2 in range(6):
+                di2, dj2 = neighbour_offsets[idx_2]
+                i2 = i1 + di2
+                j2 = j1 + dj2
+                if playable[i2, j2] == 1:
+                    has_neighbours = True
+                    break
+
+            if not has_neighbours:
+                playable[i1, j1] = 0
 
     return playable
 
 @njit(cache=True)
-def fast_update_available_for_hex(available, coords, neighbour_offsets, playable):
-    i1, j1 = coords
-    available[i1, j1] = 0
+def fast_update_available_for_hex(available, coords, offsets, playable):
+    i0, j0 = coords
+    available[i0, j0] = 0
 
-    for o_idx in range(6):
-        di, dj = neighbour_offsets[o_idx]
-        i2 = i1 + di
-        j2 = j1 + dj
-        if playable[i2, j2] == 1:
-            available[i2, j2] = 1
+    for o in range(6):
+        di, dj = offsets[o]
+        i1 = i0 + di
+        j1 = j0 + dj
+        if playable[i1, j1] == 1:
+            available[i1, j1] = 1
+        else:
+            available[i1, j1] = 0
 
     return available
 
@@ -293,7 +294,7 @@ def fast_batch_get_updated_playable(moves, height, width, playable, neighbour_of
     for move_idx in prange(num_moves):
         coords1 = moves[move_idx, 0:2]
         coords2 = moves[move_idx, 2:4]
-        updated_playables[move_idx] = playable
+        updated_playables[move_idx] = playable[:]
         updated_playables[move_idx] = fast_update_playable_for_hex(updated_playables[move_idx], coords1, neighbour_offsets)
         updated_playables[move_idx] = fast_update_playable_for_hex(updated_playables[move_idx], coords2, neighbour_offsets)
 
@@ -307,7 +308,7 @@ def fast_batch_get_updated_available(moves, updated_playables, height, width, av
     for move_idx in prange(num_moves):
         coords1 = moves[move_idx, 0:2]
         coords2 = moves[move_idx, 2:4]
-        updated_availables[move_idx] = available
+        updated_availables[move_idx] = available[:]
         updated_playable = updated_playables[move_idx]
         updated_availables[move_idx] = fast_update_available_for_hex(updated_availables[move_idx], coords1, neighbour_offsets, updated_playable)
         updated_availables[move_idx] = fast_update_available_for_hex(updated_availables[move_idx], coords2, neighbour_offsets, updated_playable)
@@ -320,7 +321,7 @@ def fast_batch_get_updated_states(moves, state, height, width, updated_playables
     updated_states = np.zeros((num_moves, height + 2, width + 4, 11), dtype=np.uint8)
 
     for move_idx in prange(num_moves):
-        updated_states[move_idx, :, :, :9] = state
+        updated_states[move_idx, :, :, :9] = state[:]
 
         coords1 = moves[move_idx, 0:2]
         colour1 = moves[move_idx, 4]
@@ -509,8 +510,7 @@ def fast_update_scoring_arrays_for_hex(coords, colour, clusters, sizes, scores, 
     for i in range(1, height + 1):
         for j in range(2, width + 2):
             if playable[i, j] == 1:
-                for c in range(6):
-                    scores[i, j, 3, c] = scores[i, j, 0, c] + scores[i, j, 1, c] + scores[i, j, 2, c]
+                scores[i, j, 3, colour] = scores[i, j, 0, colour] + scores[i, j, 1, colour] + scores[i, j, 2, colour]
             else:
                 scores[i, j, :, :] = 0
 
@@ -530,9 +530,9 @@ def fast_batch_get_updated_scoring_arrays(moves, updated_playables, height, widt
         colour2 = moves[move_idx, 5]
 
         playable = updated_playables[move_idx]
-        updated_clusters[move_idx] = clusters_original
-        updated_sizes[move_idx] = sizes_original
-        updated_scores[move_idx] = scores_original
+        updated_clusters[move_idx] = clusters_original[:]
+        updated_sizes[move_idx] = sizes_original[:]
+        updated_scores[move_idx] = scores_original[:]
 
         clusters = updated_clusters[move_idx]
         sizes = updated_sizes[move_idx]
@@ -628,8 +628,7 @@ def fast_batch_get_updated_scoring_arrays(moves, updated_playables, height, widt
             for i in range(1, height + 1):
                 for j in range(2, width + 2):
                     if playable[i, j] == 1:
-                        for c in range(6):
-                            scores[i, j, 3, c] = scores[i, j, 0, c] + scores[i, j, 1, c] + scores[i, j, 2, c]
+                        scores[i, j, 3, colour] = scores[i, j, 0, colour] + scores[i, j, 1, colour] + scores[i, j, 2, colour]
                     else:
                         scores[i, j, :, :] = 0
 
@@ -661,7 +660,6 @@ def fast_generate_vector_representation(playable, available, state, scores, heig
         colour_counts_sum = 0
         score_counts_sum_0 = 0
         score_counts_sum_1 = 0
-        score_counts_sum_2 = 0
 
         for i in range(1, height + 1):
             for j in range(2, width + 2):
@@ -671,13 +669,12 @@ def fast_generate_vector_representation(playable, available, state, scores, heig
                 if scores[i, j, 3, c] > 0:
                     score_counts_sum_0 += 1
 
-                if available[i, j] == 1 and scores[i, j, 3, c] == 0:
-                    score_counts_sum_2 += 1
-
         colour_counts[c] = colour_counts_sum
         score_counts[0, c] = score_counts_sum_0
         score_counts[1, c] = score_counts_sum_1
-        score_counts[2, c] = score_counts_sum_2
+
+        if score_counts_sum_0 == 0:
+            score_counts[2, c] = 1
 
         score_counts[3:, c] = fast_count_scores(scores[:, :, 3, c], 8)
 
@@ -714,7 +711,6 @@ def fast_batch_generate_vector_representation(updated_playable, updated_availabl
             colour_counts_sum = 0
             score_counts_sum_0 = 0
             score_counts_sum_1 = 0
-            score_counts_sum_2 = 0
 
             for i in range(1, height + 1):
                 for j in range(2, width + 2):
@@ -724,13 +720,12 @@ def fast_batch_generate_vector_representation(updated_playable, updated_availabl
                     if scores[i, j, 3, c] > 0:
                         score_counts_sum_0 += 1
 
-                    if available[i, j] == 1 and scores[i, j, 3, c] == 0:
-                        score_counts_sum_2 += 1
-
             colour_counts[c] = colour_counts_sum
             score_counts[0, c] = score_counts_sum_0
             score_counts[1, c] = score_counts_sum_1
-            score_counts[2, c] = score_counts_sum_2
+
+            if score_counts_sum_0 == 0:
+                score_counts[2, c] = 1
 
             colour_channel_flat = scores[:, :, 3, c].flatten()
             colour_channel_flat.sort()

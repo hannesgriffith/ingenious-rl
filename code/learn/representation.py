@@ -119,7 +119,6 @@ class RepresentationGenerator:
 
         return new_reprs_buffer, possible_moves_subset
 
-# @njit(cache=True)
 def fast_generate(board_repr1, board_repr2, board_vec, deck_repr, your_score_repr, other_score_repr, ingenious, num_ingenious, can_exchange, should_exchange, move_num):
     scores_repr = np.vstack((
         np.expand_dims(your_score_repr, 0),
@@ -228,6 +227,23 @@ def fast_augment(board_repr1, board_repr2, board_vec, deck_repr, scores_repr, ge
 
     return (board_repr1, board_repr2, board_vec, deck_repr, scores_repr, general_repr)
 
+def fast_random_transformations(board_repr1, board_repr2, board_vec, deck_repr, scores_repr, general_repr):
+    flip = np.random.randint(0, high=2, size=3)
+
+    if flip[0]:
+        board_repr1[:, ::-1, :, :]
+        board_repr2[:, ::-1, :, :, :]
+
+    if flip[1]:
+        board_repr1[:, :, ::-1, :]
+        board_repr2[:, :, ::-1, :, :]
+
+    if flip[2]:
+        board_repr1 = np.rot90(board_repr1, k=2, axes=(1, 2))
+        board_repr2 = np.rot90(board_repr2, k=2, axes=(1, 2))
+
+    return (board_repr1, board_repr2, board_vec, deck_repr, scores_repr, general_repr)
+
 @njit(parallel=True, fastmath=True, cache=True)
 def fast_normalise(board_repr1, board_repr2, board_vec, deck_repr, scores_repr, general_repr):
     for i in prange(board_repr1.shape[0]):
@@ -242,7 +258,7 @@ def fast_normalise(board_repr1, board_repr2, board_vec, deck_repr, scores_repr, 
         board_vec[i, 1] /= 21.
         board_vec[i, 2:8] /= 21.
         board_vec[i, 8:8+6] /= 21.
-        board_vec[i, 8+6:8+18] /= 45.
+        board_vec[i, 8+6:8+12] /= 45.
         board_vec[i, 8+18:] /= 9.
 
         deck_repr[i] /= 4.
@@ -252,7 +268,6 @@ def fast_normalise(board_repr1, board_repr2, board_vec, deck_repr, scores_repr, 
 
     return (board_repr1, board_repr2, board_vec, deck_repr, scores_repr, general_repr)
 
-# @njit(cache=True)
 def fast_prepare_vector_input(board_vec_flat, deck_repr, scores_repr, general_repr_flat):
     b = board_vec_flat.shape[0]
     deck_repr_flat = deck_repr.reshape(b, -1)
@@ -261,13 +276,13 @@ def fast_prepare_vector_input(board_vec_flat, deck_repr, scores_repr, general_re
     vector_input = np.hstack((board_vec_flat, vector_for_grid))
     return vector_for_grid, vector_input
 
-# @njit(cache=True)
 def fast_prepare_grid_input(board_repr1, board_repr2):
     b = board_repr1.shape[0]
     board_repr2_reshaped = board_repr2.reshape(b, 11 + 2, 21 + 4, 4 * 6)
-    return np.concatenate((board_repr1, board_repr2_reshaped), axis=3)
+    combined = np.concatenate((board_repr1, board_repr2_reshaped), axis=3)
+    combined = np.transpose(combined, (0, 3, 1, 2))
+    return combined
 
-# @njit(cache=True)
 def fast_add_score_features(scores_repr):
     b = scores_repr.shape[0]
     scores_repr_updated = np.zeros((b, 3, 6))
@@ -275,7 +290,6 @@ def fast_add_score_features(scores_repr):
     scores_repr_updated[:, 2, :] = scores_repr[:, 0, :] - scores_repr[:, 1, :]
     return scores_repr_updated
 
-# @njit(cache=True)
 def fast_prepare(board_repr1, board_repr2, board_vec, deck_repr, scores_repr, general_repr):
     scores_repr = fast_add_score_features(scores_repr)
     vector_for_grid, vector_input = fast_prepare_vector_input(board_vec, deck_repr, scores_repr, general_repr)
@@ -284,6 +298,7 @@ def fast_prepare(board_repr1, board_repr2, board_vec, deck_repr, scores_repr, ge
 
 def fast_preprocess(inputs):
     inputs = fast_augment(*inputs)
+    # inputs = fast_random_transformations(*inputs)
     inputs = [input_.astype(np.float32) for input_ in inputs]
     inputs = fast_normalise(*inputs)
     inputs = fast_prepare(*inputs)
