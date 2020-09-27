@@ -254,12 +254,12 @@ def fast_normalise(board_repr1, board_repr2, board_vec, deck_repr, scores_repr, 
         board_repr2[i, :, :, 2, :] /= 5.
         board_repr2[i, :, :, 3, :] /= 9.
 
-        board_vec[i, 0] /= 85.
-        board_vec[i, 1] /= 21.
-        board_vec[i, 2:8] /= 21.
-        board_vec[i, 8:8+6] /= 21.
-        board_vec[i, 8+6:8+12] /= 45.
-        board_vec[i, 8+18:] /= 9.
+        board_vec[i, 0] /= 85. # num playable
+        board_vec[i, 1] /= 21. # num available
+        board_vec[i, 2:8] /= 21. # colour counts
+        board_vec[i, 8:8+6] /= 21. # playable colours
+        board_vec[i, 8+6:8+12] /= 45. # total scores
+        board_vec[i, 8+18:] /= 9. # colour scores
 
         deck_repr[i] /= 4.
         scores_repr[i] /= 18.

@@ -1,5 +1,5 @@
 {
-    "restore_ckpt_dir": "logs/self_play_mlp_2020-09-17_18-07",
+    "restore_ckpt_dir": "logs/self_play_mlp_2020-09-25_16-28",
     "game_type": "training",
     "network_type": "mlp",
     "log_every_n_steps": 50,
@@ -14,10 +14,8 @@
     "updates_per_step": 1,
     "improvement_threshold": 0.55,
     "initial_learning_rate": 0.01,
-    "restart_learning_rate": 0.01,
     "lowest_learning_rate": 0.0001,
-    "total_training_steps": 1000000,
-    "reduce_lr_step_threshold": 1250,
+    "reduce_lr_every_n": 150000,
     "replay_buffer_size": 10000,
     "weight_decay": 0.0001
 }

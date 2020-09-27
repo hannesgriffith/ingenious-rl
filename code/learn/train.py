@@ -52,7 +52,7 @@ class SelfPlayTrainingSession:
         if self.p.restore_ckpt_dir is not None:
             self.load_training_state(self.p.restore_ckpt_dir)
         else:
-            self.steps_since_improvement = 0
+            self.steps_since_lr_change = 0
 
         self.best_self_model_step = 0
         self.best_rule_model_step = 0
@@ -101,16 +101,16 @@ class SelfPlayTrainingSession:
 
     def save_training_state(self):
         state = {
-            "steps_since_improvement": self.steps_since_improvement,
+            "steps_since_lr_change": self.steps_since_lr_change,
             "best_self_model_step": self.best_self_model_step,
             "best_rule_model_step": self.best_rule_model_step,
-            "learning_rate": self.optimizer.param_groups[0]['lr'],
+            "learning_rate": self.lr_tracker,
         }
         write_json(os.path.join(self.logs_dir, "training_state.json"), state)
 
     def load_training_state(self, load_dir):
         state = load_json(os.path.join(load_dir, "training_state.json"))
-        self.steps_since_improvement = state["steps_since_improvement"]
+        self.steps_since_lr_change = state["steps_since_lr_change"]
         self.best_self_model_step = state["best_self_model_step"]
         self.best_rule_model_step = state["best_rule_model_step"]
         self.lr_tracker = state["learning_rate"]
@@ -187,7 +187,7 @@ class SelfPlayTrainingSession:
         return avg_loss, mean_abs_error, vis_inputs
 
     def add_n_games_to_replay_buffer(self, p1, p2, n):
-        for i in range(int(n)):
+        for _ in range(int(n)):
             _, new_reprs = self.game.generate_episode(p1, p2)
             self.replay_buffer.add(new_reprs)
 
@@ -198,14 +198,14 @@ class SelfPlayTrainingSession:
 
         episode_fn = self.game.generate_episode if learn else self.game.play_test_game
 
-        for i in tqdm(range(int(n))):
+        for _ in tqdm(range(int(n))):
             winner, new_reprs = episode_fn(p1, p2)
             if learn:
                 self.replay_buffer.add(new_reprs)
                 avg_loss, abs_error, _ = self.apply_n_learning_updates(self.p.updates_per_step)
                 avg_loss_sum += avg_loss
                 abs_error_sum += abs_error
-                self.steps_since_improvement += 1
+                self.steps_since_lr_change += 1
 
             if winner == 1:
                 num_wins += 1
@@ -215,28 +215,18 @@ class SelfPlayTrainingSession:
         mean_abs_error = abs_error_sum / float(n)
         return p1_win_rate, avg_avg_loss, mean_abs_error
 
-    def step_learning_rate_scheduling(self, improved=True, elapsed_steps=0):
-        self.steps_since_improvement += elapsed_steps
+    def step_learning_rate_scheduling(self):
+        self.steps_since_lr_change += 1
 
-        if improved:
-            self.steps_since_improvement = 0
-            print("Model improved...")
-            if self.lr_tracker < self.p.restart_learning_rate:
-                self.lr_tracker = self.p.restart_learning_rate
-                print(f"Increasing learning rate to {self.lr_tracker}")
-                set_optimizer_learning_rate(self.optimizer, self.lr_tracker)
-        else:
-            if self.steps_since_improvement >= int(self.p.reduce_lr_step_threshold):
-                print(f"No improvement in {self.p.reduce_lr_step_threshold} steps...")
-                self.lr_tracker *= 0.1
-                print(f"Reducing learning rate to {self.lr_tracker}")
-                set_optimizer_learning_rate(self.optimizer, self.lr_tracker)
+        if self.steps_since_lr_change >= self.p.reduce_lr_every_n:
+            self.steps_since_lr_change = 0
+            self.lr_tracker *= 0.1
 
-        finish_training = False
+            print(f"Reducing learning rate to {self.lr_tracker}")
+            set_optimizer_learning_rate(self.optimizer, self.lr_tracker)
+
         if self.lr_tracker < self.p.lowest_learning_rate:
-            finish_training = True
-
-        return finish_training
+            self.training_finished = True
 
     def add_graph_to_logs(self):
         inputs, _ = self.replay_buffer.sample_training_minibatch()
@@ -244,6 +234,13 @@ class SelfPlayTrainingSession:
         grid_vector_device = torch.tensor(inputs[0][1], dtype=torch.float16, device=self.device)
         vector_input_device = torch.tensor(inputs[1], dtype=torch.float16, device=self.device)
         self.writer.add_graph(self.net, (grid_input_device, grid_vector_device, vector_input_device))
+
+    def write_metrics_to_tensorboard(self, step, avg_running_loss, mean_abs_error):
+        self.writer.add_scalar('metrics/learning_rate', self.lr_tracker, step)
+        self.writer.add_scalar('metrics/steps_since_lr_change', self.steps_since_lr_change, step)
+        self.writer.add_scalar('metrics/train_loss', avg_running_loss, step)
+        self.writer.add_scalar('metrics/train_error', mean_abs_error, step)
+        self.log_network_weights_hists(step)
 
     def train(self):
         self.initialise_rule_based_players()
@@ -286,42 +283,38 @@ class SelfPlayTrainingSession:
 
         running_loss, running_error = 0.0, 0.0
         best_win_rate_rule = 0.0
-        training_finished = False
+        self.training_finished = False
         self.add_graph_to_logs()
 
+        step = 0
         print("Start training")
-        for i in range(int(self.p.total_training_steps + 1)):
-            print("Step {} / {}".format(i, self.p.total_training_steps))
+        while not self.training_finished:
+            print("Step", step)
 
             self.add_n_games_to_replay_buffer(self.training_p1, self.training_p2, self.p.episodes_per_step)
             avg_loss, abs_error, vis_inputs = self.apply_n_learning_updates(self.p.updates_per_step)
             running_loss += avg_loss
             running_error += abs_error
 
-            if i > 0 and i % int(self.p.log_every_n_steps) == 0:
+            if step > 0 and step % int(self.p.log_every_n_steps) == 0:
                 avg_running_loss = running_loss / float(self.p.log_every_n_steps)
                 mean_abs_error = running_error / float(self.p.log_every_n_steps)
+                self.write_metrics_to_tensorboard(step, avg_running_loss, mean_abs_error)
                 running_loss, running_error = 0.0, 0.0
 
-                self.writer.add_scalar('metrics/learning_rate', self.optimizer.param_groups[0]['lr'], i)
-                self.writer.add_scalar('metrics/steps_since_improvement', self.steps_since_improvement, i)
-                self.writer.add_scalar('metrics/train_loss', avg_running_loss, i)
-                self.writer.add_scalar('metrics/train_error', mean_abs_error, i)
-                self.log_network_weights_hists(i)
-
-            if i % int(self.p.vis_every_n_steps) == 0:
+            if step % int(self.p.vis_every_n_steps) == 0:
                 vis_figs = generate_debug_visualisation(vis_inputs)
-                self.writer.add_figure('examples', vis_figs, global_step=i)
+                self.writer.add_figure('examples', vis_figs, global_step=step)
 
-            if i % int(self.p.test_every_n_steps) == 0:
+            if step % int(self.p.test_every_n_steps) == 0:
                 self.save_model(self.latest_ckpt_path)
-                copyfile(self.latest_ckpt_path, os.path.join(self.logs_dir, f"ckpt-{i}.pth"))
+                copyfile(self.latest_ckpt_path, os.path.join(self.logs_dir, f"ckpt-{step}.pth"))
                 self.test_player.strategy.load_model(self.latest_ckpt_path)
                 self.save_optimiser()
 
                 print(f"Playing {self.p.n_test_games} test games against self")
                 self_win_rate, _, _ = self.play_n_test_games(self.test_player, self.training_p1, self.p.n_test_games, learn=False)
-                self.writer.add_scalar('win_rates/rl', self_win_rate, i)
+                self.writer.add_scalar('win_rates/rl', self_win_rate, step)
                 print("Win rate: {:.2f}".format(self_win_rate))
 
                 if self_win_rate > self.p.improvement_threshold:
@@ -329,18 +322,13 @@ class SelfPlayTrainingSession:
                     self.training_p1.strategy.load_model(self.latest_ckpt_path)
                     self.training_p2.strategy.load_model(self.latest_ckpt_path)
                     copyfile(self.latest_ckpt_path, self.best_self_ckpt_path)
-                    self.best_self_model_step = i
-                    model_improved = True
-                else:
-                    model_improved = False
-
-                training_finished = self.step_learning_rate_scheduling(improved=model_improved, elapsed_steps=self.p.test_every_n_steps)
+                    self.best_self_model_step = step
 
                 win_rate_rule = 0.0
                 for strat in self.strategy_types:
                     print(f"Playing {self.p.n_other_games} test games against {strat}")
                     win_rate, _, _ = self.play_n_test_games(self.test_player, self.players[strat], self.p.n_other_games, learn=False)
-                    self.writer.add_scalar(f'win_rates/{strat}', win_rate, i)
+                    self.writer.add_scalar(f'win_rates/{strat}', win_rate, step)
                     print("Win rate: {:.2f}".format(win_rate))
                     win_rate_rule += win_rate
 
@@ -348,14 +336,14 @@ class SelfPlayTrainingSession:
                     best_win_rate_rule = win_rate_rule
                     print("Best rule model improved!")
                     copyfile(self.latest_ckpt_path, self.best_rule_ckpt_path)
-                    self.best_rule_model_step = i
+                    self.best_rule_model_step = step
 
                 self.save_training_state()
 
-            if training_finished:
-                print(f"Training finished after {i} steps...")
-                break
+            self.step_learning_rate_scheduling()
+            step += 1
 
+        print(f"Training finished after {step} steps...")
         print(f"Final best self model was at step {self.best_self_model_step}")
         print(f"Final best rule model was at step {self.best_rule_model_step}")
         self.writer.close()
