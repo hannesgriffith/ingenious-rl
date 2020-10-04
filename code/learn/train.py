@@ -20,7 +20,7 @@ from learn.network import get_network
 from learn.replay_buffer import ReplayBuffer
 from learn.representation import RepresentationGenerator
 from learn.visualisation import generate_debug_visualisation
-from learn.train_utils import set_model_to_half, set_optimizer_learning_rate
+from learn.train_utils import set_optimizer_params, set_model_to_half, set_model_to_float
 
 class Params: 
     def __init__(self, d):
@@ -58,7 +58,11 @@ class SelfPlayTrainingSession:
         self.best_rule_model_step = 0
 
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
         self.net = self.get_new_network()
+        # self.net = get_network(self.config).to(self.device)
+        # set_model_to_half(self.net)
+
         print("Training using device:", self.device)
 
         self.optimizer = optim.SGD(
@@ -81,7 +85,7 @@ class SelfPlayTrainingSession:
 
     def get_new_network(self):
         net = get_network(self.config).to(self.device)
-        set_model_to_half(net)
+        # set_model_to_half(net)
         return net
 
     def save_model(self, filename):
@@ -90,7 +94,7 @@ class SelfPlayTrainingSession:
 
     def load_model(self, filename):
         self.net.load_state_dict(torch.load(filename, map_location=self.device))
-        set_model_to_half(self.net)
+        # set_model_to_half(self.net)
 
     def save_optimiser(self):
         torch.save(self.optimizer.state_dict(), os.path.join(self.logs_dir, "optimiser_state.pth"))
@@ -137,30 +141,23 @@ class SelfPlayTrainingSession:
 
     def apply_learning_update(self):
         self.optimizer.zero_grad()
-        loss_invalid = True
 
-        while loss_invalid:
-            for _ in range(self.accumulate_loss_n_times):
-                loss_invalid = False
-                inputs, labels = self.replay_buffer.sample_training_minibatch()
+        for _ in range(self.accumulate_loss_n_times):
+            inputs, labels = self.replay_buffer.sample_training_minibatch()
 
-                grid_input_device = torch.tensor(inputs[0][0], dtype=torch.float16, device=self.device)
-                grid_vector_device = torch.tensor(inputs[0][1], dtype=torch.float16, device=self.device)
-                vector_input_device = torch.tensor(inputs[1], dtype=torch.float16, device=self.device)
+            grid_input_device = torch.tensor(inputs[0][0], dtype=torch.float32, device=self.device)
+            grid_vector_device = torch.tensor(inputs[0][1], dtype=torch.float32, device=self.device)
+            vector_input_device = torch.tensor(inputs[1], dtype=torch.float32, device=self.device)
 
-                labels[labels == 0] = -1
-                labels_device = torch.tensor(labels, dtype=torch.float16, device=self.device)
+            labels[labels == 0] = -1
+            labels_device = torch.tensor(labels, dtype=torch.float32, device=self.device)
 
-                predictions = self.net(grid_input_device, grid_vector_device, vector_input_device)
+            predictions = self.net(grid_input_device, grid_vector_device, vector_input_device)
 
-                loss = self.loss_criterion(torch.squeeze(predictions), torch.squeeze(labels_device))
+            loss = self.loss_criterion(torch.squeeze(predictions), torch.squeeze(labels_device))
 
-                if not torch.isnan(loss) and not torch.isinf(loss):
-                    normalised_loss = loss / float(self.accumulate_loss_n_times)
-                    normalised_loss.backward()
-                else:
-                    print("\n\nInvalid loss encountered!\n\n")
-                    loss_invalid = True
+            normalised_loss = loss / float(self.accumulate_loss_n_times)
+            normalised_loss.backward()
 
         self.optimizer.step()
 
@@ -230,9 +227,9 @@ class SelfPlayTrainingSession:
 
     def add_graph_to_logs(self):
         inputs, _ = self.replay_buffer.sample_training_minibatch()
-        grid_input_device = torch.tensor(inputs[0][0], dtype=torch.float16, device=self.device)
-        grid_vector_device = torch.tensor(inputs[0][1], dtype=torch.float16, device=self.device)
-        vector_input_device = torch.tensor(inputs[1], dtype=torch.float16, device=self.device)
+        grid_input_device = torch.tensor(inputs[0][0], dtype=torch.float32, device=self.device)
+        grid_vector_device = torch.tensor(inputs[0][1], dtype=torch.float32, device=self.device)
+        vector_input_device = torch.tensor(inputs[1], dtype=torch.float32, device=self.device)
         self.writer.add_graph(self.net, (grid_input_device, grid_vector_device, vector_input_device))
 
     def write_metrics_to_tensorboard(self, step, avg_running_loss, mean_abs_error):
@@ -257,8 +254,12 @@ class SelfPlayTrainingSession:
             print("Loading checkpoint")
             load_ckpt_path = os.path.join(self.p.restore_ckpt_dir, "latest.pth")
             self.load_model(load_ckpt_path)
+
+            # self.net.load_state_dict(torch.load(load_ckpt_path, map_location=self.device))
+            # set_model_to_float(self.net)
+
             self.load_optimiser(self.p.restore_ckpt_dir)
-            set_optimizer_learning_rate(self.optimizer, self.lr_tracker)
+            set_optimizer_params(self.optimizer, lr=self.lr_tracker, weight_decay=self.p.weight_decay)
 
         self.save_model(self.latest_ckpt_path)
 

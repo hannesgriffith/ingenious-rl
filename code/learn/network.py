@@ -8,6 +8,8 @@ print("torch.backends.cudnn.benchmark =", torch.backends.cudnn.benchmark)
 def get_network(params):
     if params["network_type"] == "mlp":
         return MLP()
+    elif params["network_type"] == "mlp2":
+        return MLP2()
     # elif params["network_type"] == "conv":
     #     return Conv()
     else:
@@ -16,9 +18,6 @@ def get_network(params):
 input_channels = {"grid": None, "vector": 109}
 
 class Swish(nn.Module):
-    def __init__(self):
-        super().__init__()
-
     def forward(self, x):
         return x * torch.sigmoid(x)
 
@@ -30,6 +29,28 @@ class MLP(nn.Module):
 
         self.mlp = nn.Sequential(
             nn.Linear(self.num_input_channels, self.num_hidden_units),
+            Swish(),
+            nn.Linear(self.num_hidden_units, self.num_hidden_units),
+            Swish(),
+            nn.Linear(self.num_hidden_units, 1),
+            nn.Tanh()
+        )
+
+    def forward(self, x_grid, x_grid_vector, x_vector):
+        return self.mlp(x_vector)
+
+class MLP2(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.num_input_channels = input_channels["vector"]
+        self.num_hidden_units = 256
+
+        self.mlp = nn.Sequential(
+            nn.Linear(self.num_input_channels, self.num_hidden_units),
+            Swish(),
+            nn.Linear(self.num_hidden_units, self.num_hidden_units),
+            Swish(),
+            nn.Linear(self.num_hidden_units, self.num_hidden_units),
             Swish(),
             nn.Linear(self.num_hidden_units, self.num_hidden_units),
             Swish(),

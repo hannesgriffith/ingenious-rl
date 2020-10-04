@@ -7,7 +7,7 @@ import torch
 from game.board import combine_moves_and_deck
 from game.game_utils import get_other_player, find_winner_fast
 from learn.network import get_network
-from learn.train_utils import set_model_to_half
+from learn.train_utils import set_model_to_half, set_model_to_float
 
 def get_strategy(strategy_type, params=None):
     if strategy_type == "random":
@@ -186,8 +186,9 @@ class RLVanilla(Strategy):
 
         if params is not None and "ckpt_path" in params:
             self.model = get_network(params).to(self.device)
-            set_model_to_half(self.model)
+            # set_model_to_half(self.model)
             self.load_model(params["ckpt_path"])
+            # set_model_to_float(self.model)
 
         if params is not None and "max_eval_batch_size" in params:
             self.max_batch = params["max_eval_batch_size"]
@@ -196,11 +197,11 @@ class RLVanilla(Strategy):
 
     def set_model(self, model):
         self.model = model
-        set_model_to_half(self.model)
+        # set_model_to_half(self.model)
 
     def load_model(self, filename):
         self.model.load_state_dict(torch.load(filename, map_location=self.device))
-        set_model_to_half(self.model)
+        # set_model_to_half(self.model)
 
     def prepare_model_inputs(self, r):
         inputs = (r.board_repr1, r.board_repr2, r.board_vec, r.deck_repr, r.scores_repr, r.general_repr)
@@ -236,9 +237,9 @@ class RLVanilla(Strategy):
     def run_model(self, inputs):
         self.model.eval()
         with torch.no_grad():
-            grid_inputs = torch.tensor(inputs[0][0], dtype=torch.float16, device=self.device)
-            grid_vector_device = torch.tensor(inputs[0][1], dtype=torch.float16, device=self.device)
-            vector_inputs = torch.tensor(inputs[1], dtype=torch.float16, device=self.device)
+            grid_inputs = torch.tensor(inputs[0][0], dtype=torch.float32, device=self.device)
+            grid_vector_device = torch.tensor(inputs[0][1], dtype=torch.float32, device=self.device)
+            vector_inputs = torch.tensor(inputs[1], dtype=torch.float32, device=self.device)
             move_values = self.model(grid_inputs, grid_vector_device, vector_inputs)
             move_values = torch.squeeze(move_values).detach().cpu().numpy()
             move_values = move_values.astype(np.float32)
