@@ -53,17 +53,17 @@ class SelfPlayTrainingSession:
             self.load_training_state(self.p.restore_ckpt_dir)
         else:
             self.steps_since_lr_change = 0
+            self.current_step = 0
 
         self.best_self_model_step = 0
         self.best_rule_model_step = 0
 
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        print("Training using device:", self.device)
 
         self.net = self.get_new_network()
         # self.net = get_network(self.config).to(self.device)
         # set_model_to_half(self.net)
-
-        print("Training using device:", self.device)
 
         self.optimizer = optim.SGD(
             self.net.parameters(),
@@ -102,6 +102,7 @@ class SelfPlayTrainingSession:
     def load_optimiser(self, load_dir):
         optimiser_path = os.path.join(load_dir, "optimiser_state.pth")
         self.optimizer.load_state_dict(torch.load(optimiser_path, map_location=self.device))
+        set_optimizer_params(self.optimizer, lr=self.lr_tracker)
 
     def save_training_state(self):
         state = {
@@ -109,6 +110,7 @@ class SelfPlayTrainingSession:
             "best_self_model_step": self.best_self_model_step,
             "best_rule_model_step": self.best_rule_model_step,
             "learning_rate": self.lr_tracker,
+            "current_step": self.current_step
         }
         write_json(os.path.join(self.logs_dir, "training_state.json"), state)
 
@@ -118,10 +120,11 @@ class SelfPlayTrainingSession:
         self.best_self_model_step = state["best_self_model_step"]
         self.best_rule_model_step = state["best_rule_model_step"]
         self.lr_tracker = state["learning_rate"]
+        self.current_step = state["current_step"]
 
-    def log_network_weights_hists(self, step):
+    def log_network_weights_hists(self):
         for name, params in self.net.named_parameters():
-            self.writer.add_histogram(f"weights/{name}", params, global_step=step)
+            self.writer.add_histogram(f"weights/{name}", params, global_step=self.current_step)
 
     def initialise_rule_based_players(self):
         self.players = {}
@@ -220,7 +223,7 @@ class SelfPlayTrainingSession:
             self.lr_tracker *= 0.1
 
             print(f"Reducing learning rate to {self.lr_tracker}")
-            set_optimizer_learning_rate(self.optimizer, self.lr_tracker)
+            set_optimizer_params(self.optimizer, lr=self.lr_tracker)
 
         if self.lr_tracker < self.p.lowest_learning_rate:
             self.training_finished = True
@@ -232,12 +235,12 @@ class SelfPlayTrainingSession:
         vector_input_device = torch.tensor(inputs[1], dtype=torch.float32, device=self.device)
         self.writer.add_graph(self.net, (grid_input_device, grid_vector_device, vector_input_device))
 
-    def write_metrics_to_tensorboard(self, step, avg_running_loss, mean_abs_error):
-        self.writer.add_scalar('metrics/learning_rate', self.lr_tracker, step)
-        self.writer.add_scalar('metrics/steps_since_lr_change', self.steps_since_lr_change, step)
-        self.writer.add_scalar('metrics/train_loss', avg_running_loss, step)
-        self.writer.add_scalar('metrics/train_error', mean_abs_error, step)
-        self.log_network_weights_hists(step)
+    def write_metrics_to_tensorboard(self, avg_running_loss, mean_abs_error):
+        self.writer.add_scalar('metrics/learning_rate', self.lr_tracker, self.current_step)
+        self.writer.add_scalar('metrics/steps_since_lr_change', self.steps_since_lr_change, self.current_step)
+        self.writer.add_scalar('metrics/train_loss', avg_running_loss, self.current_step)
+        self.writer.add_scalar('metrics/train_error', mean_abs_error, self.current_step)
+        self.log_network_weights_hists()
 
     def train(self):
         self.initialise_rule_based_players()
@@ -287,35 +290,34 @@ class SelfPlayTrainingSession:
         self.training_finished = False
         self.add_graph_to_logs()
 
-        step = 0
         print("Start training")
         while not self.training_finished:
-            print("Step", step)
+            print("Step", self.current_step)
 
             self.add_n_games_to_replay_buffer(self.training_p1, self.training_p2, self.p.episodes_per_step)
             avg_loss, abs_error, vis_inputs = self.apply_n_learning_updates(self.p.updates_per_step)
             running_loss += avg_loss
             running_error += abs_error
 
-            if step > 0 and step % int(self.p.log_every_n_steps) == 0:
+            if self.current_step > 0 and self.current_step % int(self.p.log_every_n_steps) == 0:
                 avg_running_loss = running_loss / float(self.p.log_every_n_steps)
                 mean_abs_error = running_error / float(self.p.log_every_n_steps)
-                self.write_metrics_to_tensorboard(step, avg_running_loss, mean_abs_error)
+                self.write_metrics_to_tensorboard(avg_running_loss, mean_abs_error)
                 running_loss, running_error = 0.0, 0.0
 
-            if step % int(self.p.vis_every_n_steps) == 0:
+            if self.current_step % int(self.p.vis_every_n_steps) == 0:
                 vis_figs = generate_debug_visualisation(vis_inputs)
-                self.writer.add_figure('examples', vis_figs, global_step=step)
+                self.writer.add_figure('examples', vis_figs, global_step=self.current_step)
 
-            if step % int(self.p.test_every_n_steps) == 0:
+            if self.current_step % int(self.p.test_every_n_steps) == 0:
                 self.save_model(self.latest_ckpt_path)
-                copyfile(self.latest_ckpt_path, os.path.join(self.logs_dir, f"ckpt-{step}.pth"))
+                copyfile(self.latest_ckpt_path, os.path.join(self.logs_dir, f"ckpt-{self.current_step}.pth"))
                 self.test_player.strategy.load_model(self.latest_ckpt_path)
                 self.save_optimiser()
 
                 print(f"Playing {self.p.n_test_games} test games against self")
                 self_win_rate, _, _ = self.play_n_test_games(self.test_player, self.training_p1, self.p.n_test_games, learn=False)
-                self.writer.add_scalar('win_rates/rl', self_win_rate, step)
+                self.writer.add_scalar('win_rates/rl', self_win_rate, self.current_step)
                 print("Win rate: {:.2f}".format(self_win_rate))
 
                 if self_win_rate > self.p.improvement_threshold:
@@ -323,13 +325,13 @@ class SelfPlayTrainingSession:
                     self.training_p1.strategy.load_model(self.latest_ckpt_path)
                     self.training_p2.strategy.load_model(self.latest_ckpt_path)
                     copyfile(self.latest_ckpt_path, self.best_self_ckpt_path)
-                    self.best_self_model_step = step
+                    self.best_self_model_step = self.current_step
 
                 win_rate_rule = 0.0
                 for strat in self.strategy_types:
                     print(f"Playing {self.p.n_other_games} test games against {strat}")
                     win_rate, _, _ = self.play_n_test_games(self.test_player, self.players[strat], self.p.n_other_games, learn=False)
-                    self.writer.add_scalar(f'win_rates/{strat}', win_rate, step)
+                    self.writer.add_scalar(f'win_rates/{strat}', win_rate, self.current_step)
                     print("Win rate: {:.2f}".format(win_rate))
                     win_rate_rule += win_rate
 
@@ -337,14 +339,14 @@ class SelfPlayTrainingSession:
                     best_win_rate_rule = win_rate_rule
                     print("Best rule model improved!")
                     copyfile(self.latest_ckpt_path, self.best_rule_ckpt_path)
-                    self.best_rule_model_step = step
+                    self.best_rule_model_step = self.current_step
 
                 self.save_training_state()
 
             self.step_learning_rate_scheduling()
-            step += 1
+            self.current_step += 1
 
-        print(f"Training finished after {step} steps...")
+        print(f"Training finished after {self.current_step} steps...")
         print(f"Final best self model was at step {self.best_self_model_step}")
         print(f"Final best rule model was at step {self.best_rule_model_step}")
         self.writer.close()

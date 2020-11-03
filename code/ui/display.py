@@ -8,7 +8,7 @@ from utils.loader import ImageLoader
 from game.tiles import flip_tile
 
 # background_colour = [100, 200, 100]
-# background_colour = [240, 200, 240]
+background_colour = [240, 200, 240]
 # background_colour = [randint(0, 255), randint(0, 255), randint(0, 255)]
 
 def generate_background_colour():
@@ -21,7 +21,8 @@ def generate_background_colour():
         k = randint(*range_)
     return [i, j, k]
 
-background_colour = generate_background_colour()
+# background_colour = generate_background_colour()
+# background_colour = [255, 153, 152]
 
 deck_i_colour = (240, 240, 240)
 deck1_i_colour = (240, 240, 240)
