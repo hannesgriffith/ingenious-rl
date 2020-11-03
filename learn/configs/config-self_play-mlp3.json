@@ -1,5 +1,5 @@
 {
-    "restore_ckpt_dir": "logs/self_play_mlp2_2020-10-09_19-44",
+    "restore_ckpt_dir": "learn/logs/self_play_mlp2_2020-10-09_19-44",
     "game_type": "training",
     "network_type": "mlp2",
     "log_every_n_steps": 100,

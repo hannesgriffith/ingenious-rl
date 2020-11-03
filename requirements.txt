@@ -7,3 +7,5 @@ tqdm
 pillow
 tensorboard
 icc-rt
+dataclasses
+dataclasses-json

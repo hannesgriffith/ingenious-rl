@@ -21,29 +21,22 @@ from learn.replay_buffer import ReplayBuffer
 from learn.representation import RepresentationGenerator
 from learn.visualisation import generate_debug_visualisation
 from learn.train_utils import set_optimizer_params, set_model_to_half, set_model_to_float
-
-class Params: 
-    def __init__(self, d):
-        self.__dict__ = d
-
-    def save(self, save_path):
-        output_path = os.path.join(save_path, "config.json")
-        write_json(output_path, self.__dict__)
+from learn.config import TrainingConfig
 
 class SelfPlayTrainingSession:
     def __init__(self, config):
         self.config = config
-        self.p = Params(self.config)
+        self.p = TrainingConfig.from_dict(config)
         self.game = get_gameplay(self.config)
         self.repr = RepresentationGenerator()
         self.replay_buffer = ReplayBuffer(self.config)
 
-        self.logs_dir = "logs/self_play_{}_{}".format(self.p.network_type, time.strftime("%Y-%m-%d_%H-%M"))
+        self.logs_dir = "learn/logs/self_play_{}_{}".format(self.p.network_type, time.strftime("%Y-%m-%d_%H-%M"))
         self.logs_base_str = os.path.join(self.logs_dir, "ckpt-{}.pth")
 
         make_dir_if_not_exists(self.logs_dir)
         make_dir_if_not_exists(os.path.join(self.logs_dir, "tensorboard"))
-        self.p.save(self.logs_dir)
+        write_json(os.path.join(self.logs_dir, "config.json"), self.p.to_dict())
 
         self.best_self_ckpt_path = os.path.join(self.logs_dir, "best_self.pth")
         self.best_rule_ckpt_path = os.path.join(self.logs_dir, "best_rule.pth")

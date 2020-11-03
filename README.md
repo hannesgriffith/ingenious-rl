@@ -14,18 +14,18 @@ pip install -r requirements.txt
 cd code
 ```
 
-To play the agent, set your game settings in `code/settings_play.json`. Then run:
+To play the agent, set your game settings in `code/settings_play.json`. Then run `python main.py`.
 
-```bash
-python main.py
-```
+To train a model, define your training config in `code/learn/configs`. Then run `python -m learn.train <path/to/your/train/config>`.
 
-To train a model, define your training config in `code/learn/configs`. Then run:
-
-```bash
-python -m learn.train <path/to/your/train/config>
-```
+Note that the first time you play or train there will be a couple delays that may last some minutes where numba is compiling. However, this is cached so won't happen on subsequent runs.
 
 ## Background
 
-The RL approach was based on both Tesauro's TD-Gammon and DeepMind's AlphaGo algorithms.
+The RL approach was inspired by both Tesauro's TD-Gammon and DeepMind's AlphaGo algorithms.
+
+## To-Do's
+
+- Train an updated CNN model
+- improve UI code
+- add docs

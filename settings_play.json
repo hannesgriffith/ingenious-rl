@@ -1,6 +1,6 @@
 {
     "1": {
-        "name": "Tom",
+        "name": "Human",
         "player_type": "human",
         "strategy_type": null,
         "show_deck": true
@@ -10,7 +10,7 @@
         "player_type": "computer",
         "strategy_type": "rl",
         "network_type": "mlp2",
-        "ckpt_path": "best_ckpts/mlp2_101020_tom_test.pth",
+        "ckpt_path": "learn/best_ckpts/best_mlp-mlp2_101020.pth",
         "show_deck": false
     },
     "game_type": "computer"

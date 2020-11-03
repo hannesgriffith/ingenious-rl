@@ -8,7 +8,7 @@ from ui.interface import Move, Response
 from game.gameplay import get_gameplay
 from game.tiles import flip_tile
 
-LOGO_PATH = '../imgs/logo.png'
+LOGO_PATH = 'imgs/logo.png'
 
 class EventHandler:
     def __init__(self, display, controller):

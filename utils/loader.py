@@ -1,30 +1,30 @@
 import pygame as pg
 from pygame.locals import *
 
-LIGHT_TILE_PATH = '../imgs/tile_light.png'
-DARK_TILE_PATH = '../imgs/tile_dark.png'
-SELECT_RED_DARK_PATH = '../imgs/select_red_dark.png'
-SELECT_RED_LIGHT_PATH = '../imgs/select_red_light.png'
-SELECT_BLUE_DARK_PATH = '../imgs/select_blue_dark.png'
-SELECT_BLUE_LIGHT_PATH = '../imgs/select_blue_light.png'
+LIGHT_TILE_PATH = 'imgs/tile_light.png'
+DARK_TILE_PATH = 'imgs/tile_dark.png'
+SELECT_RED_DARK_PATH = 'imgs/select_red_dark.png'
+SELECT_RED_LIGHT_PATH = 'imgs/select_red_light.png'
+SELECT_BLUE_DARK_PATH = 'imgs/select_blue_dark.png'
+SELECT_BLUE_LIGHT_PATH = 'imgs/select_blue_light.png'
 
-ORANGE_TILE_PATH = '../imgs/tile_orange.png'
-YELLOW_TILE_PATH = '../imgs/tile_yellow.png'
-BLUE_TILE_PATH = '../imgs/tile_blue.png'
-PURPLE_TILE_PATH = '../imgs/tile_purple.png'
-GREEN_TILE_PATH = '../imgs/tile_green.png'
-RED_TILE_PATH = '../imgs/tile_red.png'
+ORANGE_TILE_PATH = 'imgs/tile_orange.png'
+YELLOW_TILE_PATH = 'imgs/tile_yellow.png'
+BLUE_TILE_PATH = 'imgs/tile_blue.png'
+PURPLE_TILE_PATH = 'imgs/tile_purple.png'
+GREEN_TILE_PATH = 'imgs/tile_green.png'
+RED_TILE_PATH = 'imgs/tile_red.png'
 
-SCORES_PATH = '../imgs/scores.png'
-SCORE_PATH = '../imgs/score.png'
-CONFIRM_PATH = '../imgs/confirm.png'
-CANCEL_PATH = '../imgs/cancel.png'
-INGENIOUS_PATH = '../imgs/ingenious.png'
-START_PATH = '../imgs/start.png'
-EMPTY_PATH =  '../imgs/empty.png'
+SCORES_PATH = 'imgs/scores.png'
+SCORE_PATH = 'imgs/score.png'
+CONFIRM_PATH = 'imgs/confirm.png'
+CANCEL_PATH = 'imgs/cancel.png'
+INGENIOUS_PATH = 'imgs/ingenious.png'
+START_PATH = 'imgs/start.png'
+EMPTY_PATH =  'imgs/empty.png'
 
-PLAYER1 = '../imgs/player1.png'
-PLAYER2 = '../imgs/player2.png'
+PLAYER1 = 'imgs/player1.png'
+PLAYER2 = 'imgs/player2.png'
 
 class ImageLoader:
     def __init__(self):
@@ -91,7 +91,7 @@ class ImageLoader:
     def load_numbers(self):
         self.numbers = {}
         for i in range(0, 19):
-            filepath = '../imgs/{}.png'.format(i)
+            filepath = 'imgs/{}.png'.format(i)
             self.numbers[i] = pg.image.load(filepath)
 
     def process_numbers(self):
